@@ -403,18 +403,18 @@ private fun RecordingCard(
             Spacer(Modifier.width(8.dp))
             Text("Start recording", style = MaterialTheme.typography.titleMedium)
         }
-        is RecordingState.Active -> Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), modifier = Modifier.fillMaxWidth()) {
+        is RecordingState.Active -> Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), modifier = Modifier.fillMaxWidth().height(56.dp)) {
                 var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
                 LaunchedEffect(Unit) { while (true) { delay(1000L); nowMs = System.currentTimeMillis() } }
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column {
                         Text(
                             RecordingService.formatElapsed(nowMs - state.startedAtMs),
-                            style = MaterialTheme.typography.headlineSmall,
+                            style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
                         )
@@ -425,15 +425,15 @@ private fun RecordingCard(
                         )
                     }
                     if (state.paused) {
-                        IconButton(onClick = onResume, modifier = Modifier.size(56.dp)) {
+                        IconButton(onClick = onResume, modifier = Modifier.size(48.dp)) {
                             Icon(Icons.Default.PlayArrow, contentDescription = "Resume", tint = Color.White, modifier = Modifier.size(32.dp))
                         }
                     } else {
-                        IconButton(onClick = onPause, modifier = Modifier.size(56.dp)) {
+                        IconButton(onClick = onPause, modifier = Modifier.size(48.dp)) {
                             Icon(Icons.Default.Pause, contentDescription = "Pause", tint = Color.White, modifier = Modifier.size(32.dp))
                         }
                     }
-                    IconButton(onClick = onStop, modifier = Modifier.size(56.dp)) {
+                    IconButton(onClick = onStop, modifier = Modifier.size(48.dp)) {
                         Icon(Icons.Default.Stop, contentDescription = "Stop", tint = Color.Red, modifier = Modifier.size(32.dp))
                     }
                 }
