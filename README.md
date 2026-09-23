@@ -1,7 +1,7 @@
 # Trip Explorer – phone app (Android)
 
 Writes the `trips/` folders on the phone: GPS recordings as GPX, and POIs as folders with text files,
-photos and audio notes. No map, no Google services, no Hilt. The PC app
+photos and audio notes. Reads the plans the PC app saves in `trips/plans/` and drives them stop by stop with Waze. No map, no Google services, no Hilt. The PC app
 ([trip-explorer-pc](https://github.com/lotanbar/trip-explorer-pc)) shows the folders on a map; the spec
 lives there in `docs/Trip_Explorer_Spec.docx`.
 

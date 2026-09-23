@@ -12,9 +12,9 @@ object Trips {
     fun tripDir(trip: String): File = File(root, trip)
     fun recordingsDir(trip: String): File = File(tripDir(trip), Names.RECORDINGS_FOLDER)
 
-    /** Trip folder names, sorted case-insensitively. */
+    /** Trip folder names, sorted case-insensitively. plans/ is not a trip. */
     fun list(): List<String> =
-        root.listFiles()?.filter { it.isDirectory }?.map { it.name }
+        root.listFiles()?.filter { it.isDirectory && !it.name.equals(Names.PLANS_FOLDER, ignoreCase = true) }?.map { it.name }
             ?.sortedWith(String.CASE_INSENSITIVE_ORDER) ?: emptyList()
 
     /** Creates trips/ (if needed) and the trip folder. The name must already pass [Names.check]. */

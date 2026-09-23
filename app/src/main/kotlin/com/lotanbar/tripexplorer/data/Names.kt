@@ -6,6 +6,8 @@ package com.lotanbar.tripexplorer.data
  */
 object Names {
     const val RECORDINGS_FOLDER = "recordings"
+    /** trips/plans/ holds plan files; it is not a trip, so a trip can't take the name. */
+    const val PLANS_FOLDER = "plans"
 
     private const val FORBIDDEN = "\\/:*?\"<>|"
     private val RESERVED = buildSet {
@@ -29,6 +31,9 @@ object Names {
         if (name.uppercase() in RESERVED) return "$name is a reserved name on Windows."
         if (isPoi && name.equals(RECORDINGS_FOLDER, ignoreCase = true)) {
             return "\"recordings\" is reserved for the recordings folder."
+        }
+        if (!isPoi && name.equals(PLANS_FOLDER, ignoreCase = true)) {
+            return "\"plans\" is reserved for the plans folder."
         }
         if (taken.any { it.equals(name, ignoreCase = true) }) {
             return if (isPoi) "A POI named \"$name\" already exists in this trip." else "A trip named \"$name\" already exists."

@@ -74,6 +74,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lotanbar.tripexplorer.data.GpxWriter
 import com.lotanbar.tripexplorer.data.Groups
 import com.lotanbar.tripexplorer.data.Names
+import com.lotanbar.tripexplorer.data.Plans
 import com.lotanbar.tripexplorer.data.Poi
 import com.lotanbar.tripexplorer.data.PoiStore
 import com.lotanbar.tripexplorer.data.Trips
@@ -91,6 +92,7 @@ import java.io.File
 fun MainScreen(
     onAddPoi: (trip: String, lat: Double, lon: Double, atMs: Long) -> Unit,
     onOpenPoi: (File) -> Unit,
+    onOpenPlan: (File) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -102,6 +104,8 @@ fun MainScreen(
     val recordingState by RecordingService.state.collectAsStateWithLifecycle()
     val recordings = remember(refresh, currentTrip, recordingState) { currentTrip?.let { Trips.recordings(it) } ?: emptyList() }
     val pois = remember(refresh, currentTrip) { currentTrip?.let { trip -> Trips.poiDirs(trip).mapNotNull { PoiStore.read(it) } } ?: emptyList() }
+    // Plans are shared by all trips: whatever trip is picked, the tab lists trips/plans/.
+    val plans = remember(refresh) { Plans.list() }
     var tab by rememberSaveable { mutableIntStateOf(0) }
 
     // Re-read the folders whenever the app comes back (files may have changed over USB, or a POI was edited).
@@ -248,7 +252,7 @@ fun MainScreen(
         )
     }
 
-    // --- Layout: trip picker, POIs / Recordings tabs, Add POI, recording controls ---
+    // --- Layout: trip picker, POIs / Recordings / Plans tabs, Add POI, recording controls ---
     Column(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp)) {
         var expanded by remember { mutableStateOf(false) }
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }, modifier = Modifier.fillMaxWidth()) {
@@ -278,9 +282,14 @@ fun MainScreen(
         TabRow(selectedTabIndex = tab, containerColor = MaterialTheme.colorScheme.background) {
             Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("POIs (${pois.size})") })
             Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Recordings (${recordings.size})") })
+            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Plans (${plans.size})") })
         }
         Box(Modifier.fillMaxWidth().weight(1f)) {
-            if (tab == 0) PoiList(pois, onOpenPoi) else RecordingList(recordings, recordingState, onFinish = ::finishIncomplete)
+            when (tab) {
+                0 -> PoiList(pois, onOpenPoi)
+                1 -> RecordingList(recordings, recordingState, onFinish = ::finishIncomplete)
+                else -> PlanList(plans, onOpenPlan)
+            }
         }
 
         Spacer(Modifier.height(12.dp))
@@ -341,6 +350,33 @@ private fun PoiList(pois: List<Poi>, onOpen: (File) -> Unit) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            }
+            HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+        }
+    }
+}
+
+/** Every plan in trips/plans/; the phone only reads them, they are made on the PC. */
+@Composable
+private fun PlanList(plans: List<File>, onOpen: (File) -> Unit) {
+    if (plans.isEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("No plans yet. Plans are made in the PC app.", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+        }
+        return
+    }
+    LazyColumn(Modifier.fillMaxSize()) {
+        items(plans, key = { it.absolutePath }) { file ->
+            val name = Plans.nameOf(file)
+            val count = remember(file, file.lastModified()) { Plans.read(file).size }
+            Column(Modifier.fillMaxWidth().clickable { onOpen(file) }.padding(vertical = 10.dp)) {
+                Text(
+                    name,
+                    style = MaterialTheme.typography.bodyLarge.copy(textDirection = name.resolvedTextDirection(), textAlign = name.resolvedTextAlign()),
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("$count stop${if (count != 1) "s" else ""}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
         }

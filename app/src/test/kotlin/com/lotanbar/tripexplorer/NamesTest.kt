@@ -47,6 +47,13 @@ class NamesTest {
     }
 
     @Test
+    fun refusesPlansForTripsOnly() {
+        assertNotNull(Names.check("plans"))
+        assertNotNull(Names.check("Plans"))
+        assertNull(Names.check("plans", isPoi = true))
+    }
+
+    @Test
     fun refusesDuplicatesCaseInsensitively() {
         assertNotNull(Names.check("portara", taken = listOf("Portara"), isPoi = true))
         assertNotNull(Names.check("Greece", taken = listOf("greece")))
