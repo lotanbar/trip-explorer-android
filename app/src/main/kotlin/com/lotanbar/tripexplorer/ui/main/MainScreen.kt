@@ -8,7 +8,9 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,7 +26,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddLocation
 import androidx.compose.material.icons.filled.FiberManualRecord
-import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
@@ -42,8 +43,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -55,11 +57,13 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -68,7 +72,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lotanbar.tripexplorer.data.GpxWriter
+import com.lotanbar.tripexplorer.data.Groups
 import com.lotanbar.tripexplorer.data.Names
+import com.lotanbar.tripexplorer.data.Poi
+import com.lotanbar.tripexplorer.data.PoiStore
 import com.lotanbar.tripexplorer.data.Trips
 import com.lotanbar.tripexplorer.service.RecordingService
 import com.lotanbar.tripexplorer.service.RecordingState
@@ -83,7 +90,7 @@ import java.io.File
 @Composable
 fun MainScreen(
     onAddPoi: (trip: String, lat: Double, lon: Double, atMs: Long) -> Unit,
-    onOpenPoiList: () -> Unit,
+    onOpenPoi: (File) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -94,13 +101,16 @@ fun MainScreen(
     var currentTrip by remember(refresh) { mutableStateOf(Trips.currentTrip(context)) }
     val recordingState by RecordingService.state.collectAsStateWithLifecycle()
     val recordings = remember(refresh, currentTrip, recordingState) { currentTrip?.let { Trips.recordings(it) } ?: emptyList() }
+    val pois = remember(refresh, currentTrip) { currentTrip?.let { trip -> Trips.poiDirs(trip).mapNotNull { PoiStore.read(it) } } ?: emptyList() }
+    var tab by rememberSaveable { mutableIntStateOf(0) }
 
-    // Re-read the folders whenever the app comes back (files may have changed over USB).
+    // Re-read the folders whenever the app comes back (files may have changed over USB, or a POI was edited).
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) refresh++ }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+    LaunchedEffect(Unit) { refresh++ }
 
     var showNewTrip by remember { mutableStateOf(trips.isEmpty()) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -238,8 +248,8 @@ fun MainScreen(
         )
     }
 
-    // --- Layout ---
-    Column(Modifier.fillMaxSize().systemBarsPadding().padding(16.dp)) {
+    // --- Layout: trip picker, POIs / Recordings tabs, Add POI, recording controls ---
+    Column(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp)) {
         var expanded by remember { mutableStateOf(false) }
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }, modifier = Modifier.fillMaxWidth()) {
             val shown = currentTrip ?: "No trip"
@@ -264,7 +274,22 @@ fun MainScreen(
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
+        TabRow(selectedTabIndex = tab, containerColor = MaterialTheme.colorScheme.background) {
+            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("POIs (${pois.size})") })
+            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Recordings (${recordings.size})") })
+        }
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            if (tab == 0) PoiList(pois, onOpenPoi) else RecordingList(recordings, recordingState, onFinish = ::finishIncomplete)
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Button(onClick = ::onAddPoiPressed, modifier = Modifier.fillMaxWidth().height(56.dp)) {
+            Icon(Icons.Default.AddLocation, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Add POI", style = MaterialTheme.typography.titleMedium)
+        }
+        Spacer(Modifier.height(12.dp))
         RecordingCard(
             state = recordingState,
             onStart = ::onStartPressed,
@@ -272,54 +297,91 @@ fun MainScreen(
             onResume = { RecordingService.resume(context) },
             onStop = { RecordingService.stop(context) },
         )
+    }
+}
 
-        Spacer(Modifier.height(16.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = ::onAddPoiPressed, modifier = Modifier.weight(1f).height(56.dp)) {
-                Icon(Icons.Default.AddLocation, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Add POI", style = MaterialTheme.typography.titleMedium)
-            }
-            OutlinedButton(onClick = onOpenPoiList, modifier = Modifier.weight(1f).height(56.dp)) {
-                Icon(Icons.Default.List, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("POIs", style = MaterialTheme.typography.titleMedium)
-            }
+@Composable
+private fun PoiList(pois: List<Poi>, onOpen: (File) -> Unit) {
+    if (pois.isEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("No POIs in this trip yet.", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
         }
+        return
+    }
+    LazyColumn(Modifier.fillMaxSize()) {
+        items(pois, key = { it.dir.absolutePath }) { poi ->
+            val group = Groups.byKey(poi.groupKey)
+            Row(
+                Modifier.fillMaxWidth().clickable { onOpen(poi.dir) }.padding(vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Icon(
+                    painter = painterResource(group?.iconRes ?: Groups.noGroupIcon),
+                    contentDescription = group?.name ?: "No group",
+                    tint = group?.color ?: Groups.noGroupColor,
+                    modifier = Modifier.size(28.dp),
+                )
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        poi.name,
+                        style = MaterialTheme.typography.bodyLarge.copy(textDirection = poi.name.resolvedTextDirection(), textAlign = poi.name.resolvedTextAlign()),
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    val photos = poi.media.count { !PoiStore.isAudio(it) }
+                    val notes = poi.media.size - photos
+                    Text(
+                        listOfNotNull(
+                            poi.datetime.ifBlank { null },
+                            if (photos > 0) "$photos photo${if (photos > 1) "s" else ""}" else null,
+                            if (notes > 0) "$notes note${if (notes > 1) "s" else ""}" else null,
+                        ).joinToString(" · "),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+        }
+    }
+}
 
-        Spacer(Modifier.height(20.dp))
-        Text("Recordings", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(4.dp))
-        if (recordings.isEmpty()) {
-            Text("No recordings in this trip yet.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+@Composable
+private fun RecordingList(recordings: List<File>, recordingState: RecordingState, onFinish: (File) -> Unit) {
+    val context = LocalContext.current
+    if (recordings.isEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("No recordings in this trip yet.", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
         }
-        val activeFile = (recordingState as? RecordingState.Active)?.file
-        LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
-            items(recordings, key = { it.absolutePath }) { file ->
-                val incomplete = GpxWriter.isIncomplete(file)
-                val isActive = file == activeFile
-                Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                    Text(file.name.removeSuffix(".gpx"), style = MaterialTheme.typography.bodyLarge)
-                    if (incomplete) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                if (isActive) "recording now" else "incomplete",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (isActive) MaterialTheme.colorScheme.primary else Color(0xFFE0A050),
-                            )
-                            if (!isActive) {
-                                Spacer(Modifier.weight(1f))
-                                TextButton(
-                                    enabled = recordingState is RecordingState.Idle,
-                                    onClick = { RecordingService.resumeIncomplete(context, file) },
-                                ) { Text("Resume") }
-                                TextButton(onClick = { finishIncomplete(file) }) { Text("Finish") }
-                            }
+        return
+    }
+    val activeFile = (recordingState as? RecordingState.Active)?.file
+    LazyColumn(Modifier.fillMaxSize()) {
+        items(recordings, key = { it.absolutePath }) { file ->
+            val incomplete = GpxWriter.isIncomplete(file)
+            val isActive = file == activeFile
+            Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                Text(file.name.removeSuffix(".gpx"), style = MaterialTheme.typography.bodyLarge)
+                if (incomplete) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            if (isActive) "recording now" else "incomplete",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (isActive) MaterialTheme.colorScheme.primary else Color(0xFFE0A050),
+                        )
+                        if (!isActive) {
+                            Spacer(Modifier.weight(1f))
+                            TextButton(
+                                enabled = recordingState is RecordingState.Idle,
+                                onClick = { RecordingService.resumeIncomplete(context, file) },
+                            ) { Text("Resume") }
+                            TextButton(onClick = { onFinish(file) }) { Text("Finish") }
                         }
                     }
                 }
-                HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
             }
+            HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
         }
     }
 }
@@ -332,17 +394,16 @@ private fun RecordingCard(
     onResume: () -> Unit,
     onStop: () -> Unit,
 ) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), modifier = Modifier.fillMaxWidth()) {
-        when (state) {
-            RecordingState.Idle -> Button(
-                onClick = onStart,
-                modifier = Modifier.fillMaxWidth().padding(16.dp).height(56.dp),
-            ) {
-                Icon(Icons.Default.FiberManualRecord, contentDescription = null, tint = Color(0xFFE53935))
-                Spacer(Modifier.width(8.dp))
-                Text("Start recording", style = MaterialTheme.typography.titleMedium)
-            }
-            is RecordingState.Active -> {
+    when (state) {
+        RecordingState.Idle -> Button(
+            onClick = onStart,
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+        ) {
+            Icon(Icons.Default.FiberManualRecord, contentDescription = null, tint = Color(0xFFE53935))
+            Spacer(Modifier.width(8.dp))
+            Text("Start recording", style = MaterialTheme.typography.titleMedium)
+        }
+        is RecordingState.Active -> Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), modifier = Modifier.fillMaxWidth()) {
                 var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
                 LaunchedEffect(Unit) { while (true) { delay(1000L); nowMs = System.currentTimeMillis() } }
                 Row(
@@ -376,7 +437,6 @@ private fun RecordingCard(
                         Icon(Icons.Default.Stop, contentDescription = "Stop", tint = Color.Red, modifier = Modifier.size(32.dp))
                     }
                 }
-            }
         }
     }
 }

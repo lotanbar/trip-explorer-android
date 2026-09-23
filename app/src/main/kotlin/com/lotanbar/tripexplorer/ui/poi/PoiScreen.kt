@@ -2,10 +2,9 @@ package com.lotanbar.tripexplorer.ui.poi
 
 import android.content.Intent
 import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -46,34 +45,31 @@ import java.io.File
 import java.net.URLEncoder
 import java.util.Locale
 
-/** Edit an existing POI: name, description, group; add photos or audio notes; Show in map. */
+/** Edit an existing POI: media pager on top, name / description / group, Show in map; photos and notes are added at the bottom. */
 @Composable
-fun PoiScreen(dir: File, onBack: () -> Unit, onRenamed: (File) -> Unit, onOpenMedia: (paths: List<String>, index: Int) -> Unit) {
+fun PoiScreen(dir: File, onRenamed: (File) -> Unit, onOpenMedia: (paths: List<String>, index: Int) -> Unit) {
     val context = LocalContext.current
-    val currentDir = dir
     var refresh by rememberSaveable { mutableIntStateOf(0) }
-    val poi = remember(currentDir, refresh) { PoiStore.read(currentDir) }
+    val poi = remember(dir, refresh) { PoiStore.read(dir) }
     if (poi == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("POI not found") }
         return
     }
-    var name by rememberSaveable(currentDir) { mutableStateOf(poi.name) }
-    var description by rememberSaveable(currentDir) { mutableStateOf(poi.description) }
-    var groupKey by rememberSaveable(currentDir) { mutableStateOf(poi.groupKey) }
+    var name by rememberSaveable(dir) { mutableStateOf(poi.name) }
+    var description by rememberSaveable(dir) { mutableStateOf(poi.description) }
+    var groupKey by rememberSaveable(dir) { mutableStateOf(poi.groupKey) }
     var nameError by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
-    var pendingPhotoPath by rememberSaveable { mutableStateOf<String?>(null) }
-    val pendingPhoto = pendingPhotoPath?.let(::File)
+    var showCamera by rememberSaveable { mutableStateOf(false) }
     val dirty = name != poi.name || description != poi.description || groupKey != poi.groupKey
 
-    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        val f = pendingPhoto
-        pendingPhotoPath = null
-        if (ok && f != null && f.length() > 0) {
-            val saved = PoiStore.addMedia(currentDir, f, PoiStore.MediaKind.PHOTO)
-            Trips.scan(context, saved)
-            refresh++
-        } else f?.delete()
+    if (showCamera) {
+        // Photos go straight into media/ under the next free number.
+        CameraCapture(
+            newFile = { PoiStore.nextMediaFile(dir, PoiStore.MediaKind.PHOTO) },
+            onDone = { showCamera = false; refresh++ },
+        )
+        return
     }
 
     fun showInMap() {
@@ -89,7 +85,7 @@ fun PoiScreen(dir: File, onBack: () -> Unit, onRenamed: (File) -> Unit, onOpenMe
         val err = Names.check(name, taken, isPoi = true)
         if (err != null) { nameError = err; return }
         runCatching { PoiStore.update(context, poi, name, description, groupKey) }
-            .onSuccess { if (it != currentDir) onRenamed(it) else refresh++ }
+            .onSuccess { if (it != dir) onRenamed(it) else refresh++ }
             .onFailure { message = "Could not save: ${it.message}" }
     }
 
@@ -101,51 +97,51 @@ fun PoiScreen(dir: File, onBack: () -> Unit, onRenamed: (File) -> Unit, onOpenMe
         )
     }
 
-    Column(Modifier.fillMaxSize().systemBarsPadding().padding(16.dp)) {
-        Text(poi.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text(
-            String.format(Locale.US, "%s · %s · %.5f, %.5f", poi.trip, poi.datetime, poi.lat, poi.lon),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(12.dp))
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            MediaStrip(files = poi.media, onOpen = { index -> onOpenMedia(poi.media.map { it.absolutePath }, index) }, modifier = Modifier.fillMaxWidth())
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(
-                    onClick = {
-                        val f = Capture.newPhotoFile(context)
-                        pendingPhotoPath = f.absolutePath
-                        runCatching { camera.launch(Capture.uriFor(context, f)) }
-                            .onFailure { pendingPhotoPath = null; message = "No camera app is available." }
-                    },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(Icons.Default.PhotoCamera, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Add photo")
-                }
-                AudioNoteButton(
-                    newFile = { PoiStore.nextMediaFile(currentDir, PoiStore.MediaKind.NOTE) },
-                    onRecorded = { Trips.scan(context, it); refresh++ },
-                    onError = { message = it },
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            PoiFields(
-                name = name, onName = { name = it; nameError = null }, nameError = nameError,
-                description = description, onDescription = { description = it },
-                groupKey = groupKey, onGroup = { groupKey = it },
+    BoxWithConstraints(Modifier.fillMaxSize().systemBarsPadding()) {
+        val mediaHeight = (maxHeight * 0.42f).coerceIn(220.dp, 340.dp)
+        Column(Modifier.fillMaxSize()) {
+            PoiMediaPager(
+                files = poi.media,
+                onOpen = { index -> onOpenMedia(poi.media.map { it.absolutePath }, index) },
+                modifier = Modifier.height(mediaHeight),
             )
-            OutlinedButton(onClick = ::showInMap, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Map, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Show in map")
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    String.format(Locale.US, "%s · %s · %.5f, %.5f", poi.trip, poi.datetime, poi.lat, poi.lon),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                PoiFields(
+                    name = name, onName = { name = it; nameError = null }, nameError = nameError,
+                    description = description, onDescription = { description = it },
+                    groupKey = groupKey, onGroup = { groupKey = it },
+                )
+                OutlinedButton(onClick = ::showInMap, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Map, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Show in map")
+                }
+            }
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(onClick = { showCamera = true }, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.PhotoCamera, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Add photo")
+                    }
+                    AudioNoteButton(
+                        newFile = { PoiStore.nextMediaFile(dir, PoiStore.MediaKind.NOTE) },
+                        onRecorded = { Trips.scan(context, it); refresh++ },
+                        onError = { message = it },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (dirty) {
+                    Button(onClick = ::save, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                        Text("Save", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
         }
-        Button(
-            onClick = { if (dirty) save() else onBack() },
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-        ) { Text(if (dirty) "Save" else "Back", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
     }
 }

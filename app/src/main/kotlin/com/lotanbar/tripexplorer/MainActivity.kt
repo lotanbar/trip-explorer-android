@@ -24,7 +24,6 @@ import com.lotanbar.tripexplorer.ui.main.MainScreen
 import com.lotanbar.tripexplorer.ui.permission.StoragePermissionScreen
 import com.lotanbar.tripexplorer.ui.poi.AddPoiScreen
 import com.lotanbar.tripexplorer.ui.poi.MediaPreviewScreen
-import com.lotanbar.tripexplorer.ui.poi.PoiListScreen
 import com.lotanbar.tripexplorer.ui.poi.PoiScreen
 import com.lotanbar.tripexplorer.ui.theme.TripExplorerTheme
 import java.io.File
@@ -32,7 +31,6 @@ import java.io.File
 sealed class Screen {
     data object Main : Screen()
     data class AddPoi(val trip: String, val lat: Double, val lon: Double, val atMs: Long) : Screen()
-    data object PoiList : Screen()
     data class Poi(val dir: File) : Screen()
     data class Media(val paths: List<String>, val index: Int) : Screen()
 
@@ -40,7 +38,6 @@ sealed class Screen {
     fun encode(): List<String> = when (this) {
         Main -> listOf("main")
         is AddPoi -> listOf("add", trip, lat.toString(), lon.toString(), atMs.toString())
-        PoiList -> listOf("list")
         is Poi -> listOf("poi", dir.absolutePath)
         is Media -> listOf("media", index.toString()) + paths
     }
@@ -48,7 +45,6 @@ sealed class Screen {
     companion object {
         fun decode(parts: List<String>): Screen = when (parts[0]) {
             "add" -> AddPoi(parts[1], parts[2].toDouble(), parts[3].toDouble(), parts[4].toLong())
-            "list" -> PoiList
             "poi" -> Poi(File(parts[1]))
             "media" -> Media(parts.drop(2), parts[1].toInt())
             else -> Main
@@ -94,13 +90,11 @@ private fun App() {
         when (screen) {
             Screen.Main -> MainScreen(
                 onAddPoi = { trip, lat, lon, atMs -> push(Screen.AddPoi(trip, lat, lon, atMs)) },
-                onOpenPoiList = { push(Screen.PoiList) },
+                onOpenPoi = { push(Screen.Poi(it)) },
             )
             is Screen.AddPoi -> AddPoiScreen(screen.trip, screen.lat, screen.lon, screen.atMs, onDone = ::pop)
-            Screen.PoiList -> PoiListScreen(onOpen = { push(Screen.Poi(it)) })
             is Screen.Poi -> PoiScreen(
                 dir = screen.dir,
-                onBack = ::pop,
                 onRenamed = { newDir -> stack[stack.lastIndex] = Screen.Poi(newDir) },
                 onOpenMedia = { paths, index -> push(Screen.Media(paths, index)) },
             )

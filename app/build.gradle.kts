@@ -53,6 +53,10 @@ dependencies {
     implementation(libs.coil3.compose)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)
+    implementation(libs.camerax.core)
+    implementation(libs.camerax.camera2)
+    implementation(libs.camerax.lifecycle)
+    implementation(libs.camerax.view)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
 }

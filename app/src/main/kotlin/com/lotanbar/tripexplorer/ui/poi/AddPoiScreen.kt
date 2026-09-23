@@ -1,8 +1,7 @@
 package com.lotanbar.tripexplorer.ui.poi
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,7 +23,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,54 +39,32 @@ import java.io.File
 import java.util.Locale
 
 /**
- * Add POI: the position is already taken. Opens the phone's camera at once; after each photo
- * offers "Another photo" or "Done"; then the form (name, description, group, audio notes).
+ * Add POI: the position is already taken. Opens the in-app camera at once (take any number of
+ * photos, then Done), then the form: media pager, name, description, group, photos and audio notes.
  */
 @Composable
 fun AddPoiScreen(trip: String, lat: Double, lon: Double, atMs: Long, onDone: () -> Unit) {
     val context = LocalContext.current
-    // Paths, saved with the instance state: the camera can kill the app on a small phone.
+    // Paths, saved with the instance state, so nothing is lost if the app is killed in the background.
     var photoPaths by rememberSaveable { mutableStateOf(listOf<String>()) }
     var notePaths by rememberSaveable { mutableStateOf(listOf<String>()) }
-    var pendingPhotoPath by rememberSaveable { mutableStateOf<String?>(null) }
+    var showCamera by rememberSaveable { mutableStateOf(true) }
     val photos = photoPaths.map(::File)
     val notes = notePaths.map(::File)
-    var askAnother by remember { mutableStateOf(false) }
     var name by rememberSaveable { mutableStateOf("") }
     var description by rememberSaveable { mutableStateOf("") }
     var groupKey by rememberSaveable { mutableStateOf<String?>(null) }
     var nameError by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
-    var cameraOpened by rememberSaveable { mutableStateOf(false) }
 
-    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        val f = pendingPhotoPath?.let(::File)
-        pendingPhotoPath = null
-        if (ok && f != null && f.length() > 0) {
-            photoPaths = photoPaths + f.absolutePath
-            askAnother = true
-        } else {
-            f?.delete()
-        }
-    }
-    fun openCamera() {
-        val f = Capture.newPhotoFile(context)
-        pendingPhotoPath = f.absolutePath
-        runCatching { camera.launch(Capture.uriFor(context, f)) }
-            .onFailure { pendingPhotoPath = null; message = "No camera app is available." }
-    }
-    LaunchedEffect(Unit) {
-        if (!cameraOpened) { cameraOpened = true; openCamera() }
-    }
-
-    if (askAnother) {
-        AlertDialog(
-            onDismissRequest = { askAnother = false },
-            title = { Text("Photo ${photos.size} saved") },
-            confirmButton = { TextButton(onClick = { askAnother = false; openCamera() }) { Text("Another photo") } },
-            dismissButton = { TextButton(onClick = { askAnother = false }) { Text("Done") } },
+    if (showCamera) {
+        CameraCapture(
+            newFile = { Capture.newPhotoFile(context) },
+            onDone = { files -> photoPaths = photoPaths + files.map { it.absolutePath }; showCamera = false },
         )
+        return
     }
+
     message?.let { msg ->
         AlertDialog(
             onDismissRequest = { message = null },
@@ -97,46 +73,49 @@ fun AddPoiScreen(trip: String, lat: Double, lon: Double, atMs: Long, onDone: () 
         )
     }
 
-    Column(Modifier.fillMaxSize().systemBarsPadding().padding(16.dp)) {
-        Text("New POI", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text(
-            String.format(Locale.US, "%s · %.5f, %.5f", trip, lat, lon),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(12.dp))
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            MediaStrip(files = photos + notes, onOpen = { }, modifier = Modifier.fillMaxWidth())
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onClick = ::openCamera, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.PhotoCamera, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (photos.isEmpty()) "Take photo" else "Another photo")
-                }
-                AudioNoteButton(
-                    newFile = { Capture.newNoteFile(context) },
-                    onRecorded = { notePaths = notePaths + it.absolutePath },
-                    onError = { message = it },
-                    modifier = Modifier.weight(1f),
+    BoxWithConstraints(Modifier.fillMaxSize().systemBarsPadding()) {
+        val mediaHeight = (maxHeight * 0.42f).coerceIn(220.dp, 340.dp)
+        Column(Modifier.fillMaxSize()) {
+            PoiMediaPager(files = photos + notes, onOpen = { }, modifier = Modifier.height(mediaHeight))
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    String.format(Locale.US, "%s · %.5f, %.5f", trip, lat, lon),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                PoiFields(
+                    name = name, onName = { name = it; nameError = null }, nameError = nameError,
+                    description = description, onDescription = { description = it },
+                    groupKey = groupKey, onGroup = { groupKey = it },
                 )
             }
-            PoiFields(
-                name = name, onName = { name = it; nameError = null }, nameError = nameError,
-                description = description, onDescription = { description = it },
-                groupKey = groupKey, onGroup = { groupKey = it },
-            )
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(onClick = { showCamera = true }, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.PhotoCamera, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Add photo")
+                    }
+                    AudioNoteButton(
+                        newFile = { Capture.newNoteFile(context) },
+                        onRecorded = { notePaths = notePaths + it.absolutePath },
+                        onError = { message = it },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Button(
+                    onClick = {
+                        val taken = Trips.poiDirs(trip).map { it.name }
+                        val err = Names.check(name, taken, isPoi = true)
+                        if (err != null) { nameError = err; return@Button }
+                        runCatching {
+                            PoiStore.create(context, trip, name, lat, lon, atMs, description, groupKey, photos, notes)
+                        }.onSuccess { onDone() }
+                            .onFailure { message = "Could not save the POI: ${it.message}" }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                ) { Text("Save POI", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            }
         }
-        Button(
-            onClick = {
-                val taken = Trips.poiDirs(trip).map { it.name }
-                val err = Names.check(name, taken, isPoi = true)
-                if (err != null) { nameError = err; return@Button }
-                runCatching {
-                    PoiStore.create(context, trip, name, lat, lon, atMs, description, groupKey, photos, notes)
-                }.onSuccess { onDone() }
-                    .onFailure { message = "Could not save the POI: ${it.message}" }
-            },
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-        ) { Text("Save POI", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
     }
 }
