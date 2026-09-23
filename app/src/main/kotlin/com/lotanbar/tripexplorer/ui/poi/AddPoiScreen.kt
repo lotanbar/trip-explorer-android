@@ -26,7 +26,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -48,9 +47,12 @@ import java.util.Locale
 @Composable
 fun AddPoiScreen(trip: String, lat: Double, lon: Double, atMs: Long, onDone: () -> Unit) {
     val context = LocalContext.current
-    val photos = remember { mutableStateListOf<File>() }
-    val notes = remember { mutableStateListOf<File>() }
-    var pendingPhoto by remember { mutableStateOf<File?>(null) }
+    // Paths, saved with the instance state: the camera can kill the app on a small phone.
+    var photoPaths by rememberSaveable { mutableStateOf(listOf<String>()) }
+    var notePaths by rememberSaveable { mutableStateOf(listOf<String>()) }
+    var pendingPhotoPath by rememberSaveable { mutableStateOf<String?>(null) }
+    val photos = photoPaths.map(::File)
+    val notes = notePaths.map(::File)
     var askAnother by remember { mutableStateOf(false) }
     var name by rememberSaveable { mutableStateOf("") }
     var description by rememberSaveable { mutableStateOf("") }
@@ -60,10 +62,10 @@ fun AddPoiScreen(trip: String, lat: Double, lon: Double, atMs: Long, onDone: () 
     var cameraOpened by rememberSaveable { mutableStateOf(false) }
 
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        val f = pendingPhoto
-        pendingPhoto = null
+        val f = pendingPhotoPath?.let(::File)
+        pendingPhotoPath = null
         if (ok && f != null && f.length() > 0) {
-            photos.add(f)
+            photoPaths = photoPaths + f.absolutePath
             askAnother = true
         } else {
             f?.delete()
@@ -71,9 +73,9 @@ fun AddPoiScreen(trip: String, lat: Double, lon: Double, atMs: Long, onDone: () 
     }
     fun openCamera() {
         val f = Capture.newPhotoFile(context)
-        pendingPhoto = f
+        pendingPhotoPath = f.absolutePath
         runCatching { camera.launch(Capture.uriFor(context, f)) }
-            .onFailure { pendingPhoto = null; message = "No camera app is available." }
+            .onFailure { pendingPhotoPath = null; message = "No camera app is available." }
     }
     LaunchedEffect(Unit) {
         if (!cameraOpened) { cameraOpened = true; openCamera() }
@@ -113,7 +115,7 @@ fun AddPoiScreen(trip: String, lat: Double, lon: Double, atMs: Long, onDone: () 
                 }
                 AudioNoteButton(
                     newFile = { Capture.newNoteFile(context) },
-                    onRecorded = { notes.add(it) },
+                    onRecorded = { notePaths = notePaths + it.absolutePath },
                     onError = { message = it },
                     modifier = Modifier.weight(1f),
                 )
@@ -130,7 +132,7 @@ fun AddPoiScreen(trip: String, lat: Double, lon: Double, atMs: Long, onDone: () 
                 val err = Names.check(name, taken, isPoi = true)
                 if (err != null) { nameError = err; return@Button }
                 runCatching {
-                    PoiStore.create(context, trip, name, lat, lon, atMs, description, groupKey, photos.toList(), notes.toList())
+                    PoiStore.create(context, trip, name, lat, lon, atMs, description, groupKey, photos, notes)
                 }.onSuccess { onDone() }
                     .onFailure { message = "Could not save the POI: ${it.message}" }
             },

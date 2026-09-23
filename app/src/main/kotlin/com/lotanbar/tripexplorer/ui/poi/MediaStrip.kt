@@ -47,7 +47,8 @@ fun MediaStrip(files: List<File>, onOpen: (Int) -> Unit, modifier: Modifier = Mo
             ) {
                 if (PoiStore.isAudio(file)) {
                     Icon(Icons.Default.Mic, contentDescription = file.name, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp))
-                    Text(file.nameWithoutExtension, style = MaterialTheme.typography.labelSmall, modifier = Modifier.align(Alignment.BottomCenter))
+                    val n = files.take(index + 1).count { PoiStore.isAudio(it) }
+                    Text("Note $n", style = MaterialTheme.typography.labelSmall, modifier = Modifier.align(Alignment.BottomCenter))
                 } else {
                     AsyncImage(model = file, contentDescription = file.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                 }
