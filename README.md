@@ -43,9 +43,10 @@ recording service basics. Everything else is new.
 
 ## Behaviour notes
 
-- Drive sync (switch on the main screen): while on, `trips/` syncs live with the picked Drive folder on any network,
-  also in the background; while off, nothing is sent. Drive is the truth, the newest change wins, a removal on one
-  side is mirrored (on Drive to the trash). Live test on the PC: `LIVE=1 ./gradlew testDebugUnitTest --tests '*SyncLiveTest*'`.
+- Drive sync: nothing syncs by itself. The Sync button (top right) runs one pass both ways (the newer change wins; a
+  removal on one side is mirrored, on Drive to the trash) in a foreground service, with the current item, MB and time
+  left. Tap the sync status for the last sync and what it did. Live test on the PC:
+  `LIVE=1 ./gradlew testDebugUnitTest --tests '*SyncLiveTest*'`.
 - Nothing is ever deleted by hand in the app. Clearing a POI's group renames `group-x.txt` to `.group-x.txt` (hidden; both apps read it as "No group").
 - A recording killed without Stop stays `… - recording.gpx`; on the next launch the app offers Resume / Finish / Later. If the OS restarts the service, it resumes into the same file by itself.
 - Media taken before a POI has a name is kept in the app cache and moved into `media/` on save; the Add POI screen survives the camera killing the app.

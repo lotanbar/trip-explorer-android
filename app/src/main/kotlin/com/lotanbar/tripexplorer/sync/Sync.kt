@@ -21,14 +21,11 @@ import kotlinx.coroutines.flow.StateFlow
 import java.io.File
 
 /**
- * Google Drive sync on the phone. The Sync switch (remembered) runs [SyncService]: while it is on the
- * trips folder syncs live on any network, also in the background; while it is off nothing is sent or
- * fetched. Edits made while it is off go up when it is turned on (newest wins per file).
+ * Google Drive sync on the phone: nothing happens by itself. The Sync button runs one pass (Drive's
+ * changes come down, the phone's go up; the newer change wins) inside [SyncService], so it carries on
+ * if the app goes to the background, with its progress in a notification.
  */
 object Sync {
-    private const val PREFS = "trip_explorer"
-    private const val KEY_ON = "drive_sync_on"
-
     @SuppressLint("StaticFieldLeak") // the application context
     private var engine: SyncEngine? = null
     private val _status = MutableStateFlow(SyncStatus())
@@ -56,28 +53,18 @@ object Sync {
         }
     }
 
-    fun isOn(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ON, false)
-
-    fun setOn(context: Context, on: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_ON, on).apply()
-        val intent = Intent(context, SyncService::class.java)
-        if (on) ContextCompat.startForegroundService(context, intent) else context.stopService(intent)
-    }
-
-    /** Starts the service again after the app starts, if the switch was left on. */
-    fun resume(context: Context) {
+    /** The Sync button. */
+    fun syncNow(context: Context) {
         engine(context)
-        if (isOn(context) && !(_status.value.running)) setOn(context, true)
-    }
-
-    /** Something was written in trips/ (e.g. a recording save): look now instead of within 5 s. */
-    fun poke() {
-        engine?.poke()
+        if (_status.value.busy) return
+        ContextCompat.startForegroundService(context, Intent(context, SyncService::class.java))
     }
 }
 
+/** Runs one sync pass in the foreground (so it survives the app going to the background), then stops. */
 class SyncService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
+    private var watcher: Thread? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -86,55 +73,51 @@ class SyncService : Service() {
         )
     }
 
-    private var lastNotified = ""
-
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (!Sync.isOn(this)) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
         startForeground(NOTIF_ID, build(Sync.status.value), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        if (watcher != null) return START_NOT_STICKY
         val engine = Sync.engine(this)
         engine.root = Trips.root
-        engine.start()
-        engine.poke()
-        watchJob?.interrupt()
-        watchJob = Thread {
-            try {
-                while (true) {
-                    val s = Sync.status.value
-                    val key = "${s.busy}/${s.done}/${s.total}/${s.error}/${s.folder}"
-                    if (key != lastNotified) {
-                        lastNotified = key
-                        getSystemService(NotificationManager::class.java).notify(NOTIF_ID, build(s))
-                    }
-                    Thread.sleep(700)
+        val before = Sync.status.value.lastSync
+        val errorBefore = Sync.status.value.error
+        engine.request()
+        watcher = Thread {
+            var lastKey = ""
+            val started = System.currentTimeMillis()
+            while (true) {
+                val s = Sync.status.value
+                val key = "${s.busy}/${s.done}/${s.total}/${s.current}"
+                if (key != lastKey) {
+                    lastKey = key
+                    getSystemService(NotificationManager::class.java).notify(NOTIF_ID, build(s))
                 }
-            } catch (_: InterruptedException) {
+                // Done: a new pass finished, or it failed (a new error, or any error once it stopped being busy).
+                val finished = !s.busy && (s.lastSync != before || (s.error != null && (s.error != errorBefore || System.currentTimeMillis() - started > 3000)))
+                if (finished) break
+                try { Thread.sleep(400) } catch (_: InterruptedException) { break }
             }
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
         }.apply { isDaemon = true; start() }
-        return START_STICKY
+        return START_NOT_STICKY
     }
-
-    private var watchJob: Thread? = null
 
     private fun build(s: SyncStatus): Notification {
         val tap = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val b = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_group_marker)
-            .setContentTitle(if (s.busy && s.total > 0) "Syncing with Google Drive" else "Drive sync on")
-            .setContentText(statusLine(s))
+            .setContentTitle(if (s.total > 0) "Syncing with Google Drive · ${s.done} of ${s.total}" else "Syncing with Google Drive")
+            .setContentText(s.current ?: "")
             .setContentIntent(tap)
             .setOngoing(true)
             .setSilent(true)
             .setOnlyAlertOnce(true)
-        if (s.busy && s.total > 0) b.setProgress(s.total, s.done, false)
+        if (s.total > 0) b.setProgress(s.total, s.done, false) else b.setProgress(0, 0, true)
         return b.build()
     }
 
     override fun onDestroy() {
-        watchJob?.interrupt()
-        Sync.engine(this).stop()
+        watcher?.interrupt()
         super.onDestroy()
     }
 
@@ -148,22 +131,20 @@ class SyncService : Service() {
 fun shortStatus(s: SyncStatus): String = when {
     !s.signedIn -> "Signed out"
     s.folder == null -> "No folder"
-    s.error != null -> "Error"
     s.busy && s.total > 0 -> "${s.done}/${s.total}"
-    s.busy -> "Checking"
-    !s.running -> "Off"
+    s.busy -> "Syncing"
+    s.error != null -> "Error"
     s.lastSync != null -> java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(s.lastSync))
-    else -> "On"
+    else -> "Not synced"
 }
 
-/** One line about the sync, for the Drive screen and the notification. */
-fun statusLine(s: SyncStatus): String = when {
-    !s.signedIn -> s.error ?: "Not signed in"
-    s.folder == null -> "No Drive folder picked"
-    s.error != null -> s.error
-    s.busy && s.total > 0 -> "Syncing ${s.done} of ${s.total}"
-    s.busy -> "Checking…"
-    !s.running -> "Off · “${s.folder}”"
-    s.lastSync != null -> "“${s.folder}” · synced ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(s.lastSync))}"
-    else -> "“${s.folder}”"
+/** While syncing: the item on its way, MB done and roughly how long is left. */
+fun progressLine(s: SyncStatus): String {
+    fun mb(b: Long) = if (b < 10L * 1048576) String.format(java.util.Locale.US, "%.1f", b / 1048576.0) else (b / 1048576).toString()
+    fun left(sec: Long) = if (sec < 60) "$sec s" else "${(sec + 30) / 60} min"
+    return listOfNotNull(
+        s.current,
+        if (s.bytesTotal > 0) "${mb(s.bytesDone)} of ${mb(s.bytesTotal)} MB" else null,
+        s.etaS?.let { "~${left(it)} left" },
+    ).joinToString(" · ")
 }

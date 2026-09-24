@@ -9,7 +9,6 @@ data class SyncStatus(
     val signedIn: Boolean = false,
     val email: String? = null,
     val folder: String? = null,
-    val running: Boolean = false,
     val busy: Boolean = false,
     val done: Int = 0,
     val total: Int = 0,
@@ -17,6 +16,12 @@ data class SyncStatus(
     val bytesTotal: Long = 0,
     val error: String? = null,
     val lastSync: Long? = null,
+    /** What is being sent or fetched right now ("↑ …" / "↓ …"). */
+    val current: String? = null,
+    /** Seconds left, from the transfer rate so far. */
+    val etaS: Long? = null,
+    /** What the last sync did, one line per item ("↑ …" went up, "↓ …" came down). */
+    val lastChanges: List<String> = emptyList(),
 )
 
 data class RNode(val name: String, val parent: String, val dir: Boolean, val size: Long, val modified: Long, val md5: String?) {
@@ -68,10 +73,9 @@ fun fileMd5(f: File): String {
 }
 
 /**
- * Keeps [root] in sync with a Drive folder on its own thread while started. Local changes are looked
- * for every 5 s (or at once after [poke]), Drive's every 30 s. The state (Drive folder, the known
- * Drive tree and the base) lives in [dataDir]; so does the sign-in (drive_auth.json, the same shape
- * as the PC app's).
+ * Syncs [root] with a Drive folder, one pass per [request] (the Sync button), on its own thread. The
+ * state (Drive folder and the base) lives in [dataDir]; so does the sign-in (drive_auth.json, the same
+ * shape as the PC app's).
  */
 class SyncEngine(
     private val dataDir: File,
@@ -87,16 +91,11 @@ class SyncEngine(
 
     @Volatile var root: File? = null
     private val lock = Object()
-    private var dirty = false
-    /** Bumped by start and stop: a thread whose number is no longer current ends (even mid-transfer). */
-    @Volatile private var generation = 0
+    private var requested = false
     private var thread: Thread? = null
     private var drive: DriveApi? = null
     private var state = loadState()
     private val md5Cache = HashMap<String, Triple<Long, Long, String>>()
-    private var lastRemote = 0L
-    private var lastLocal = 0L
-    private var retryAt = 0L
 
     @Volatile var status = SyncStatus()
         private set
@@ -107,7 +106,7 @@ class SyncEngine(
     init {
         dataDir.mkdirs()
         val auth = loadAuth()
-        status = status.copy(signedIn = auth != null, email = auth?.second, folder = state.folderName)
+        status = status.copy(signedIn = auth != null, email = auth?.second, folder = state.folderName, lastSync = state.lastSync, lastChanges = state.lastChanges)
     }
 
     // ── Sign-in and folder ──
@@ -122,7 +121,6 @@ class SyncEngine(
         authFile.writeText(JSONObject().put("refresh_token", refreshToken).put("email", email).toString())
         synchronized(lock) { drive = null }
         update { it.copy(signedIn = true, email = email, error = null) }
-        poke()
     }
 
     fun signOut() {
@@ -134,44 +132,22 @@ class SyncEngine(
     /** A Drive client for one-off calls (the folder picker). */
     fun client(): DriveApi? = loadAuth()?.let { DriveApi(clientId, clientSecret, it.first) }
 
-    /** Syncs with this Drive folder from now on (a fresh start: both sides are merged). */
+    /** Syncs with this Drive folder from now on (a fresh start: both sides are merged on the next pass). */
     fun pickFolder(id: String, name: String) {
         synchronized(lock) {
             state = SyncState(folderId = id, folderName = name)
             saveState()
-            lastRemote = 0
-            retryAt = 0
-            dirty = true
-            lock.notifyAll()
         }
-        update { it.copy(folder = name, error = null) }
+        update { it.copy(folder = name, error = null, lastSync = null, lastChanges = emptyList()) }
     }
 
     // ── Running ──
 
-    fun start() {
+    /** One pass: Drive's changes come down, this folder's go up; the newer change wins. */
+    fun request() {
         synchronized(lock) {
-            if (thread != null) return
-            val gen = ++generation
-            thread = Thread({ run(gen) }, "drive-sync").apply { isDaemon = true; start() }
-        }
-        update { it.copy(running = true) }
-    }
-
-    fun stop() {
-        synchronized(lock) {
-            generation++
-            lock.notifyAll()
-            thread?.interrupt()
-            thread = null
-        }
-        update { it.copy(running = false, busy = false) }
-    }
-
-    /** Something was written here: look now. */
-    fun poke() {
-        synchronized(lock) {
-            dirty = true
+            if (thread == null) thread = Thread(::run, "drive-sync").apply { isDaemon = true; start() }
+            requested = true
             lock.notifyAll()
         }
     }
@@ -181,60 +157,47 @@ class SyncEngine(
         listener.onStatus(s)
     }
 
-    private fun run(gen: Int) {
-        val stopped = { gen != generation }
+    private fun run() {
         while (true) {
-            val wasDirty: Boolean
             synchronized(lock) {
-                if (!dirty && !stopped()) runCatching { lock.wait(1000) }
-                if (stopped()) return
-                wasDirty = dirty
+                while (!requested) lock.wait()
+                requested = false
             }
-            val root = root ?: continue
-            if (state.folderId == null || !root.isDirectory) continue
-            val d = synchronized(lock) {
-                drive ?: loadAuth()?.let { DriveApi(clientId, clientSecret, it.first) }.also { drive = it }
-            } ?: continue
-            val now = System.currentTimeMillis()
-            if (now < retryAt && !wasDirty) continue
-            val remoteDue = now - lastRemote >= REMOTE_EVERY
-            val localDue = wasDirty || now - lastLocal >= LOCAL_EVERY
-            if (!remoteDue && !localDue) continue
+            val root = root
+            val problem = when {
+                root == null || !root.isDirectory -> "The trips folder is missing"
+                state.folderId == null -> "Pick a Drive folder first"
+                loadAuth() == null -> "Sign in to Google first"
+                else -> null
+            }
+            if (problem != null) {
+                update { it.copy(error = problem) }
+                continue
+            }
+            val d = synchronized(lock) { drive ?: DriveApi(clientId, clientSecret, loadAuth()!!.first).also { drive = it } }
             try {
-                cycle(d, root, remoteDue, stopped)
-                retryAt = 0
-                if (status.error != null) update { it.copy(error = null) }
-            } catch (e: InterruptedException) {
-                return
+                cycle(d, root!!)
+                update { it.copy(error = null) }
             } catch (e: Exception) {
-                if (stopped()) return
-                retryAt = System.currentTimeMillis() + RETRY_AFTER
                 val auth = e is DriveException && e.auth
                 if (auth) signOut()
-                update { it.copy(busy = false, error = if (auth) "Signed out of Google: sign in again" else (e.message ?: e.toString())) }
+                update { it.copy(busy = false, current = null, etaS = null, error = if (auth) "Signed out of Google: sign in again" else (e.message ?: e.toString())) }
             }
         }
     }
 
-    private fun cycle(d: DriveApi, root: File, remoteDue: Boolean, stopped: () -> Boolean) {
+    private fun cycle(d: DriveApi, root: File) {
         val folder = state.folderId!!
-        if (state.pageToken == null) {
-            update { it.copy(busy = true) }
-            val token = d.startPageToken()
-            val nodes = HashMap<String, RNode>()
-            listTree(d, folder, nodes)
-            state.nodes = nodes
-            state.pageToken = token
-            saveState()
-            lastRemote = System.currentTimeMillis()
-        } else if (remoteDue) {
-            pullChanges(d, folder)
-            lastRemote = System.currentTimeMillis()
-        }
+        update { it.copy(busy = true, done = 0, total = 0, bytesDone = 0, bytesTotal = 0, current = "Checking Drive…", etaS = null) }
+        // Drive as it is right now: the whole folder is listed on every pass (Drive's change feed can lag
+        // behind by seconds, and a pass usually follows right after the other device's).
+        if (d.get(folder).trashed) throw DriveException("The Drive folder was removed or trashed; pick a folder again")
+        val nodes = HashMap<String, RNode>()
+        listTree(d, folder, nodes)
+        state.nodes = nodes
 
-        synchronized(lock) { dirty = false }
+        update { it.copy(current = "Looking at the trips folder…") }
         val local = scanLocal(root)
-        lastLocal = System.currentTimeMillis()
         for ((path, e) in local.entries.toList()) {
             if (e.dir) continue
             val b = state.base[path]
@@ -246,6 +209,9 @@ class SyncEngine(
             local[path] = e.copy(md5 = m)
         }
         val remote = remotePaths(folder, state.nodes)
+        if (remote.isEmpty() && state.base.isNotEmpty()) {
+            throw DriveException("The Drive folder is empty, but it was synced before: nothing was changed here. Pick the folder again to start over")
+        }
         val actions = plan(local, remote, state.base)
 
         fun sizeOf(a: Action) = when (a) {
@@ -256,7 +222,7 @@ class SyncEngine(
         val work = actions.filter { it.isWork }
         val total = work.size
         val bytesTotal = work.sumOf { sizeOf(it) }
-        if (total > 0) update { it.copy(busy = true, done = 0, total = total, bytesDone = 0, bytesTotal = bytesTotal) }
+        update { it.copy(total = total, bytesTotal = bytesTotal, current = null) }
 
         val ids = HashMap<String, String>()
         remote.forEach { (p, e) -> if (e.dir) ids[p] = e.id }
@@ -264,16 +230,19 @@ class SyncEngine(
         val goneRemote = ArrayList<String>()
         val goneLocal = ArrayList<String>()
         val changedHere = ArrayList<File>()
+        val changes = ArrayList<String>()
+        val started = System.currentTimeMillis()
         var done = 0
         var bytesDone = 0L
         var lastSave = System.currentTimeMillis()
         for (a in actions) {
-            if (stopped()) throw InterruptedException()
             val skip = when (a) {
                 is Action.TrashRemote -> goneRemote.any { under(a.path, it) }
                 is Action.DeleteLocal -> goneLocal.any { under(a.path, it) }
                 else -> false
             }
+            // Items inside a folder that was just removed went with it: not listed on their own.
+            if (!skip) describe(a)?.let { line -> changes.add(line); update { it.copy(current = line) } }
             if (skip) forgetTree(a.key) else apply(d, root, a, local, remote, ids)
             when (a) {
                 is Action.TrashRemote -> goneRemote.add(a.path)
@@ -287,41 +256,22 @@ class SyncEngine(
                 done++
                 bytesDone += sizeOf(a)
                 if (System.currentTimeMillis() - lastSave > 2000) { saveState(); lastSave = System.currentTimeMillis() }
+                // Time left: each item costs its bytes plus a fixed request overhead, at the pace so far.
+                val secs = (System.currentTimeMillis() - started) / 1000.0
+                val workDone = bytesDone + done * ITEM_OVERHEAD
+                val workLeft = (bytesTotal - bytesDone) + (total - done) * ITEM_OVERHEAD
+                val eta = if (secs > 1.0 && done < total) Math.round(workLeft / (workDone / secs)) else null
                 val (dn, bd) = done to bytesDone
-                update { it.copy(done = dn, bytesDone = bd) }
+                update { it.copy(done = dn, bytesDone = bd, etaS = eta) }
             }
         }
+        state.lastSync = System.currentTimeMillis()
+        state.lastChanges = changes
         saveState()
         if (changedHere.isNotEmpty()) listener.onLocalChanged(changedHere)
-        update { it.copy(busy = false, lastSync = System.currentTimeMillis(), done = if (total == 0) 0 else it.done, total = if (total == 0) 0 else it.total) }
+        update { it.copy(busy = false, current = null, etaS = null, lastSync = state.lastSync, lastChanges = changes) }
     }
 
-    /** Applies Drive's changes since the last look to the known tree. */
-    private fun pullChanges(d: DriveApi, folder: String) {
-        val (changes, token) = d.changes(state.pageToken!!)
-        if (changes.isEmpty()) { state.pageToken = token; return }
-        val before = remotePaths(folder, state.nodes).values.map { it.id }.toHashSet()
-        for (c in changes) {
-            if (c.fileId == folder) {
-                if (c.removed || c.file?.trashed == true) throw DriveException("The Drive folder was removed or trashed; pick a folder again")
-                continue
-            }
-            if (!c.removed && c.file == null) continue
-            val n = if (c.removed) null else c.file?.let { RNode.from(it) }
-            if (n != null) state.nodes[c.fileId] = n else state.nodes.remove(c.fileId)
-        }
-        // Keep only what is inside the folder; a folder that newly appeared in it (moved in from elsewhere
-        // in Drive) has its contents listed, as those files did not change themselves.
-        val now = remotePaths(folder, state.nodes)
-        val inside = now.values.map { it.id }.toHashSet()
-        state.nodes.keys.retainAll(inside)
-        for (e in now.values) if (e.dir && e.id !in before) listTree(d, e.id, state.nodes)
-        state.pageToken = token
-        saveState()
-    }
-
-    /** Drops a path and everything under it from the base. (Drive's tree is left alone: a folder renamed on
-     * Drive has the same id at its new path.) */
     private fun forgetTree(path: String) {
         state.base.keys.filter { it == path || under(it, path) }.forEach { state.base.remove(it) }
     }
@@ -412,11 +362,15 @@ class SyncEngine(
         var pageToken: String? = null,
         var nodes: HashMap<String, RNode> = HashMap(),
         val base: java.util.TreeMap<String, BaseEntry> = java.util.TreeMap(),
+        var lastSync: Long? = null,
+        var lastChanges: List<String> = emptyList(),
     )
 
     private fun loadState(): SyncState = runCatching {
         val o = JSONObject(stateFile.readText())
         val s = SyncState(o.optString("folder_id").ifEmpty { null }, o.optString("folder_name").ifEmpty { null }, o.optString("page_token").ifEmpty { null })
+        s.lastSync = o.optLong("last_sync").takeIf { it > 0 }
+        s.lastChanges = o.optJSONArray("last_changes")?.let { a -> List(a.length()) { a.getString(it) } } ?: emptyList()
         o.optJSONObject("nodes")?.let { n ->
             for (id in n.keys()) n.getJSONObject(id).let { e ->
                 s.nodes[id] = RNode(e.getString("name"), e.getString("parent"), e.getBoolean("dir"), e.getLong("size"), e.getLong("modified"), e.optString("md5").ifEmpty { null })
@@ -441,15 +395,15 @@ class SyncEngine(
         }
         val o = JSONObject().put("folder_id", state.folderId ?: "").put("folder_name", state.folderName ?: "").put("page_token", state.pageToken ?: "")
             .put("nodes", nodes).put("base", base)
+            .put("last_sync", state.lastSync ?: 0).put("last_changes", org.json.JSONArray(state.lastChanges))
         val tmp = File(dataDir, "drive_sync.json.tmp")
         tmp.writeText(o.toString())
         tmp.renameTo(stateFile)
     }
 
     companion object {
-        private const val REMOTE_EVERY = 30_000L
-        private const val LOCAL_EVERY = 5_000L
-        private const val RETRY_AFTER = 30_000L
+        /** The cost of one item for the time-left estimate, as bytes (a request's round trip). */
+        private const val ITEM_OVERHEAD = 64.0 * 1024
 
         fun localFile(root: File, rel: String): File = rel.split('/').fold(root) { f, part -> File(f, part) }
 
@@ -469,16 +423,39 @@ class SyncEngine(
             return out
         }
 
-        /** Everything under a Drive folder, into [nodes] (one request per folder). */
+        /** Everything under a Drive folder, into [nodes]: level by level, up to 8 folders listed at once. */
         fun listTree(d: DriveApi, top: String, nodes: MutableMap<String, RNode>) {
-            val queue = ArrayDeque(listOf(top))
-            while (queue.isNotEmpty()) {
-                for (f in d.children(queue.removeLast(), false)) {
-                    val n = RNode.from(f) ?: continue
-                    if (n.dir) queue.add(f.id)
-                    nodes[f.id] = n
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(8)
+            try {
+                var level = listOf(top)
+                while (level.isNotEmpty()) {
+                    val results = level.map { dir -> pool.submit<List<RemoteFile>> { d.children(dir, false) } }.map {
+                        try { it.get() } catch (e: java.util.concurrent.ExecutionException) { throw e.cause ?: e }
+                    }
+                    val next = ArrayList<String>()
+                    for (list in results) for (f in list) {
+                        val n = RNode.from(f) ?: continue
+                        if (n.dir) next.add(f.id)
+                        nodes[f.id] = n
+                    }
+                    level = next
                 }
+            } finally {
+                pool.shutdown()
             }
+        }
+
+        /** One line for the progress and the "what changed" list: ↑ went to Drive, ↓ came from Drive. */
+        fun describe(a: Action): String? = when (a) {
+            is Action.MkdirRemote -> "↑ new folder ${a.path}"
+            is Action.Upload -> "↑ ${a.path}"
+            is Action.MoveRemote -> "↑ renamed ${a.from} → ${a.to}"
+            is Action.TrashRemote -> "↑ removed ${a.path}"
+            is Action.MkdirLocal -> "↓ new folder ${a.path}"
+            is Action.Download -> "↓ ${a.path}"
+            is Action.MoveLocal -> "↓ renamed ${a.from} → ${a.to}"
+            is Action.DeleteLocal -> "↓ removed ${a.path}"
+            is Action.Record, is Action.Forget -> null
         }
     }
 }

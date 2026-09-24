@@ -50,6 +50,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.ui.text.style.TextOverflow
 import android.widget.Toast
 import com.lotanbar.tripexplorer.sync.shortStatus
+import com.lotanbar.tripexplorer.sync.progressLine
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Switch
 import androidx.compose.material3.MaterialTheme
@@ -92,7 +94,6 @@ import com.lotanbar.tripexplorer.data.Trips
 import com.lotanbar.tripexplorer.service.RecordingService
 import com.lotanbar.tripexplorer.service.RecordingState
 import com.lotanbar.tripexplorer.sync.Sync
-import com.lotanbar.tripexplorer.sync.statusLine
 import com.lotanbar.tripexplorer.ui.plan.PlanStops
 import com.lotanbar.tripexplorer.ui.theme.resolvedTextAlign
 import com.lotanbar.tripexplorer.ui.theme.resolvedTextDirection
@@ -128,12 +129,11 @@ fun MainScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     LaunchedEffect(Unit) { refresh++ }
-    // Drive sync: start it again if the switch was left on; re-read the folders when it changes files here.
-    LaunchedEffect(Unit) { Sync.resume(context) }
+    // Drive sync (the Sync button): re-read the folders when a pass changed files here.
+    LaunchedEffect(Unit) { Sync.engine(context) }
     val syncStatus by Sync.status.collectAsStateWithLifecycle()
     val syncChanges by Sync.changes.collectAsStateWithLifecycle()
     LaunchedEffect(syncChanges) { if (syncChanges > 0) refresh++ }
-    var syncOn by remember { mutableStateOf(Sync.isOn(context)) }
 
     // Only when asked for (Trip menu → + New trip). With no trip the app can still be looked around (plans);
     // what needs a trip says so.
@@ -310,27 +310,44 @@ fun MainScreen(
         }
         Spacer(Modifier.width(8.dp))
         SyncStatus(
-            on = syncOn,
-            line = if (!Sync.configured) "No client" else shortStatus(syncStatus.copy(running = syncOn && syncStatus.running)),
-            error = syncStatus.error != null,
+            ready = syncStatus.signedIn && syncStatus.folder != null,
+            line = if (!Sync.configured) "No client" else shortStatus(syncStatus),
+            error = syncStatus.error != null && !syncStatus.busy,
             onOpen = onOpenDrive,
         )
-        Switch(
-            checked = syncOn,
-            onCheckedChange = { on ->
-                when {
-                    !on -> { Sync.setOn(context, false); syncOn = false }
-                    !Sync.configured -> message = "This build has no Google client, so Drive sync is off."
-                    !syncStatus.signedIn || syncStatus.folder == null -> onOpenDrive()
-                    else -> { Sync.setOn(context, true); syncOn = true }
-                }
-            },
-        )
+        // The Sync button: one pass, both ways.
+        if (syncStatus.busy) {
+            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 3.dp) }
+        } else {
+            IconButton(
+                onClick = {
+                    when {
+                        !Sync.configured -> message = "This build has no Google client, so Drive sync is off."
+                        !syncStatus.signedIn || syncStatus.folder == null -> onOpenDrive()
+                        else -> Sync.syncNow(context)
+                    }
+                },
+            ) { Icon(Icons.Default.Sync, contentDescription = "Sync with Google Drive", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp)) }
         }
-        val progress = if (syncStatus.busy && syncStatus.total > 0) {
-            if (syncStatus.bytesTotal > 0) syncStatus.bytesDone.toFloat() / syncStatus.bytesTotal else syncStatus.done.toFloat() / syncStatus.total
-        } else null
-        if (progress != null) LinearProgressIndicator(progress = { progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(3.dp))
+        }
+        // While syncing: a bar, and the item on its way · MB done · time left.
+        if (syncStatus.busy) {
+            val progress = when {
+                syncStatus.bytesTotal > 0 -> syncStatus.bytesDone.toFloat() / syncStatus.bytesTotal
+                syncStatus.total > 0 -> syncStatus.done.toFloat() / syncStatus.total
+                else -> null
+            }
+            if (progress != null) LinearProgressIndicator(progress = { progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(3.dp))
+            else LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp))
+            Text(
+                progressLine(syncStatus),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+            )
+        }
 
         Spacer(Modifier.height(4.dp))
         TabRow(selectedTabIndex = tab, containerColor = MaterialTheme.colorScheme.background) {
@@ -368,14 +385,14 @@ fun MainScreen(
 
 /** Drive sync at a glance: a cloud and a few words (tap for the Drive screen, where errors are spelled out). */
 @Composable
-private fun SyncStatus(on: Boolean, line: String, error: Boolean, onOpen: () -> Unit) {
+private fun SyncStatus(ready: Boolean, line: String, error: Boolean, onOpen: () -> Unit) {
     Row(Modifier.clickable(onClick = onOpen).padding(horizontal = 4.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(
-            if (on) Icons.Default.Cloud else Icons.Default.CloudOff,
+            if (ready) Icons.Default.Cloud else Icons.Default.CloudOff,
             contentDescription = "Drive sync",
             tint = when {
                 error -> Color(0xFFEF5350)
-                on -> MaterialTheme.colorScheme.primary
+                ready -> MaterialTheme.colorScheme.primary
                 else -> MaterialTheme.colorScheme.onSurfaceVariant
             },
             modifier = Modifier.size(20.dp),

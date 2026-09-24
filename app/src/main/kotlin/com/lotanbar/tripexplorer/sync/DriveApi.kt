@@ -51,8 +51,6 @@ data class RemoteFile(
     }
 }
 
-class Change(val removed: Boolean, val fileId: String, val file: RemoteFile?)
-
 /**
  * The few Drive v3 calls the sync needs, over plain HttpURLConnection (no Google libraries).
  * PATCH goes as POST with X-HTTP-Method-Override, which Google's APIs accept. Blocking.
@@ -61,6 +59,8 @@ class DriveApi(private val clientId: String, private val clientSecret: String, p
     private var access: String? = null
     private var accessUntil = 0L
 
+    /** Shared by the threads that list folders at once. */
+    @Synchronized
     private fun token(): String {
         access?.let { if (System.currentTimeMillis() < accessUntil) return it }
         val (code, text) = post(TOKEN_URL, form("client_id" to clientId, "client_secret" to clientSecret, "refresh_token" to refreshToken, "grant_type" to "refresh_token"))
@@ -111,6 +111,8 @@ class DriveApi(private val clientId: String, private val clientSecret: String, p
         return c.inputStream.bufferedReader().use { JSONObject(it.readText()) }.also { c.disconnect() }
     }
 
+    fun get(id: String): RemoteFile = RemoteFile.from(json("GET", "$API/files/$id?fields=${enc(FILE_FIELDS)}"))
+
     fun aboutEmail(): String = json("GET", "$API/about?fields=user(emailAddress)").getJSONObject("user").getString("emailAddress")
 
     /** Every non-trashed child of a folder (`foldersOnly`: just the subfolders), by name. */
@@ -127,26 +129,6 @@ class DriveApi(private val clientId: String, private val clientSecret: String, p
             page = o.optString("nextPageToken").ifEmpty { null }
         } while (page != null)
         return out
-    }
-
-    fun startPageToken(): String = json("GET", "$API/changes/startPageToken").getString("startPageToken")
-
-    /** Every change since [token], and the token to continue from next time. */
-    fun changes(token: String): Pair<List<Change>, String> {
-        val out = ArrayList<Change>()
-        var page = token
-        while (true) {
-            val o = json("GET", "$API/changes?pageToken=${enc(page)}&fields=${enc("nextPageToken,newStartPageToken,changes(removed,fileId,file($FILE_FIELDS))")}&pageSize=1000&includeRemoved=true&spaces=drive")
-            o.optJSONArray("changes")?.let { a ->
-                for (i in 0 until a.length()) {
-                    val c = a.getJSONObject(i)
-                    val id = c.optString("fileId").ifEmpty { null } ?: continue
-                    out.add(Change(c.optBoolean("removed"), id, c.optJSONObject("file")?.let { RemoteFile.from(it) }))
-                }
-            }
-            o.optString("newStartPageToken").ifEmpty { null }?.let { return out to it }
-            page = o.optString("nextPageToken").ifEmpty { null } ?: throw DriveException("Drive changes list ended without a token")
-        }
     }
 
     fun createFolder(parent: String, name: String): RemoteFile =

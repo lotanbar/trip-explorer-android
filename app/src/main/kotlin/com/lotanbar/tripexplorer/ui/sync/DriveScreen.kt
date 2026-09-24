@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -117,24 +118,29 @@ fun DriveScreen(onDone: () -> Unit) {
         Text(listOfNotNull(status.email, status.folder?.let { "syncs with “$it”" }).joinToString(" · "), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         status.error?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = Color(0xFFEF5350)) }
         Spacer(Modifier.height(8.dp))
-        // Signed in again with a folder already picked: carry on with it (no new merge), or pick another below.
-        status.folder?.let { folder ->
-            if (!Sync.isOn(context)) {
-                Button(onClick = { Sync.setOn(context, true); onDone() }, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Keep syncing with “$folder”") }
-                Spacer(Modifier.height(8.dp))
-                Text("Or pick another folder:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        // A folder is picked: what the last sync did, and Sync now; another folder can still be picked below.
+        status.folder?.let {
+            val time = status.lastSync?.let { t -> java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(t)) }
+            Text(if (time != null) "Last sync: $time" else "Not synced yet", style = MaterialTheme.typography.titleSmall)
+            if (status.lastChanges.isNotEmpty()) {
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 160.dp).padding(vertical = 4.dp)) {
+                    items(status.lastChanges) { line -> Text(line, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                }
+            } else if (time != null) {
+                Text("Nothing changed.", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = { Sync.syncNow(context); onDone() }, enabled = !status.busy, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Sync now") }
+            Spacer(Modifier.height(12.dp))
+            Text("Or pick another folder:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         FolderPicker(
             onPick = { f ->
                 engine.pickFolder(f.id, f.name)
-                Sync.setOn(context, true)
+                Sync.syncNow(context)
                 onDone()
             },
-            onSignOut = {
-                Sync.setOn(context, false)
-                engine.signOut()
-            },
+            onSignOut = { engine.signOut() },
             onError = { message = it },
         )
     }
@@ -186,7 +192,7 @@ private fun FolderPicker(onPick: (RemoteFile) -> Unit, onSignOut: () -> Unit, on
         AlertDialog(
             onDismissRequest = { confirm = null },
             title = { Text("Sync with “${f.name}”?") },
-            text = { Text("The trips folder and this Drive folder are merged: files on only one side are copied to the other, and where both have a file the newer one is kept. Sync turns on.") },
+            text = { Text("The trips folder and this Drive folder are merged: files on only one side are copied to the other, and where both have a file the newer one is kept.") },
             confirmButton = { TextButton(onClick = { confirm = null; onPick(f) }) { Text("Sync") } },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("Cancel") } },
         )
