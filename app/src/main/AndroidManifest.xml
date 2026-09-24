@@ -38,6 +38,13 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- "Back to Trip Explorer" on the page Google's sign-in ends on. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="tripexplorer" android:host="signed-in" />
+            </intent-filter>
         </activity>
 
         <service

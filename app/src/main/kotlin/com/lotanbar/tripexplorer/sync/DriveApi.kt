@@ -262,7 +262,7 @@ class DriveApi(private val clientId: String, private val clientSecret: String, p
          * Google's page; this waits up to five minutes for the redirect to a one-shot local server and
          * returns the refresh token.
          */
-        fun signIn(clientId: String, clientSecret: String, openUrl: (String) -> Unit): String {
+        fun signIn(clientId: String, clientSecret: String, backLink: String? = null, openUrl: (String) -> Unit): String {
             ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { server ->
                 val redirect = "http://127.0.0.1:${server.localPort}"
                 val verifier = randomToken(48)
@@ -293,8 +293,13 @@ class DriveApi(private val clientId: String, private val clientSecret: String, p
                             return@use
                         }
                         val ok = query["state"] == state && query["code"] != null
-                        val body = if (ok) "<html><body style=\"font-family:sans-serif;background:#121212;color:#e0e0e0\"><h2>Trip Explorer is signed in.</h2><p>Go back to the app.</p></body></html>"
-                        else "<html><body style=\"font-family:sans-serif;background:#121212;color:#e0e0e0\"><h2>Sign-in did not finish.</h2></body></html>"
+                        // A phone-sized page; the link opens the app again (Android intent: URL, `backLink`).
+                        val page = { title: String, extra: String ->
+                            "<html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"></head>" +
+                                "<body style=\"font-family:sans-serif;background:#121212;color:#e0e0e0;padding:24px\"><h2>$title</h2>$extra</body></html>"
+                        }
+                        val body = if (ok) page("Trip Explorer is signed in.", backLink?.let { "<p><a style=\"color:#2196f3;font-size:1.2em\" href=\"$it\">Back to Trip Explorer</a></p>" } ?: "<p>Go back to the app.</p>")
+                        else page("Sign-in did not finish.", "")
                         val bytes = body.toByteArray()
                         out.write("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray())
                         out.write(bytes)

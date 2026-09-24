@@ -60,6 +60,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Debug builds (tested over adb) keep the screen on while the app is showing.
+        if (BuildConfig.DEBUG) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
             TripExplorerTheme {
                 Surface(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {

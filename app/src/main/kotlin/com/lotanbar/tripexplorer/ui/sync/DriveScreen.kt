@@ -3,6 +3,8 @@ package com.lotanbar.tripexplorer.ui.sync
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -70,7 +72,8 @@ fun DriveScreen(onDone: () -> Unit) {
         signInJob = scope.launch {
             try {
                 val (token, email) = runInterruptible(Dispatchers.IO) {
-                    val token = DriveApi.signIn(BuildConfig.GOOGLE_CLIENT_ID, BuildConfig.GOOGLE_CLIENT_SECRET) { url ->
+                    val back = "tripexplorer://signed-in"
+                    val token = DriveApi.signIn(BuildConfig.GOOGLE_CLIENT_ID, BuildConfig.GOOGLE_CLIENT_SECRET, back) { url ->
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     }
                     token to DriveApi(BuildConfig.GOOGLE_CLIENT_ID, BuildConfig.GOOGLE_CLIENT_SECRET, token).aboutEmail()
@@ -111,8 +114,16 @@ fun DriveScreen(onDone: () -> Unit) {
             Button(onClick = ::signIn, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Sign in with Google") }
             return@Column
         }
-        Text(listOfNotNull(status.email, status.folder?.let { "now syncing with “$it”" }).joinToString(" · "), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(listOfNotNull(status.email, status.folder?.let { "syncs with “$it”" }).joinToString(" · "), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(8.dp))
+        // Signed in again with a folder already picked: carry on with it (no new merge), or pick another below.
+        status.folder?.let { folder ->
+            if (!Sync.isOn(context)) {
+                Button(onClick = { Sync.setOn(context, true); onDone() }, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Keep syncing with “$folder”") }
+                Spacer(Modifier.height(8.dp))
+                Text("Or pick another folder:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
         FolderPicker(
             onPick = { f ->
                 engine.pickFolder(f.id, f.name)
@@ -181,11 +192,13 @@ private fun FolderPicker(onPick: (RemoteFile) -> Unit, onSignOut: () -> Unit, on
     }
 
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
             stack.forEachIndexed { i, (_, name) ->
                 if (i > 0) Text("/", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(
                     name,
+                    maxLines = 1,
+                    softWrap = false,
                     color = if (i == stack.lastIndex) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
                     modifier = Modifier.clickable(enabled = i < stack.lastIndex) { stack = stack.take(i + 1) }.padding(vertical = 8.dp),
                 )
