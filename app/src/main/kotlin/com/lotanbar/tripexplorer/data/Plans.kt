@@ -11,7 +11,7 @@ import java.util.Locale
 /**
  * Plans are made on the PC: `trips/plans/<name>.txt`, one stop per line in plan order,
  * `lat, lon, name`, with `, visited` at the end once the stop is ticked as visited. The phone only
- * changes that tick. Each stop is driven with Waze, one at a time.
+ * changes that tick. Tapping a stop opens Waze navigating to it.
  */
 object Plans {
     data class Stop(val lat: Double, val lon: Double, val name: String, val visited: Boolean = false)
@@ -76,15 +76,5 @@ object Plans {
         if (!isWazeInstalled(context)) return false
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(wazeUrl(stop))).setPackage(WAZE_PACKAGE)
         return runCatching { context.startActivity(intent); true }.getOrDefault(false)
-    }
-
-    private const val PREFS = "trip_explorer"
-
-    /** Index of the last stop opened in Waze for this plan file, or -1; the next one is highlighted. */
-    fun lastOpened(context: Context, file: File): Int =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt("plan_last:${file.absolutePath}", -1)
-
-    fun setLastOpened(context: Context, file: File, index: Int) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt("plan_last:${file.absolutePath}", index).apply()
     }
 }
