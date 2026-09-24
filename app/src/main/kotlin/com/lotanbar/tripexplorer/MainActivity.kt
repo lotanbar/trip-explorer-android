@@ -25,6 +25,7 @@ import com.lotanbar.tripexplorer.ui.permission.StoragePermissionScreen
 import com.lotanbar.tripexplorer.ui.poi.AddPoiScreen
 import com.lotanbar.tripexplorer.ui.poi.MediaPreviewScreen
 import com.lotanbar.tripexplorer.ui.poi.PoiScreen
+import com.lotanbar.tripexplorer.ui.sync.DriveScreen
 import com.lotanbar.tripexplorer.ui.theme.TripExplorerTheme
 import java.io.File
 
@@ -33,6 +34,7 @@ sealed class Screen {
     data class AddPoi(val trip: String, val lat: Double, val lon: Double, val atMs: Long) : Screen()
     data class Poi(val dir: File) : Screen()
     data class Media(val paths: List<String>, val index: Int) : Screen()
+    data object Drive : Screen()
 
     /** Encoded for the saved instance state, so the stack survives process death (e.g. under the camera). */
     fun encode(): List<String> = when (this) {
@@ -40,6 +42,7 @@ sealed class Screen {
         is AddPoi -> listOf("add", trip, lat.toString(), lon.toString(), atMs.toString())
         is Poi -> listOf("poi", dir.absolutePath)
         is Media -> listOf("media", index.toString()) + paths
+        Drive -> listOf("drive")
     }
 
     companion object {
@@ -47,6 +50,7 @@ sealed class Screen {
             "add" -> AddPoi(parts[1], parts[2].toDouble(), parts[3].toDouble(), parts[4].toLong())
             "poi" -> Poi(File(parts[1]))
             "media" -> Media(parts.drop(2), parts[1].toInt())
+            "drive" -> Drive
             else -> Main
         }
     }
@@ -91,6 +95,7 @@ private fun App() {
             Screen.Main -> MainScreen(
                 onAddPoi = { trip, lat, lon, atMs -> push(Screen.AddPoi(trip, lat, lon, atMs)) },
                 onOpenPoi = { push(Screen.Poi(it)) },
+                onOpenDrive = { push(Screen.Drive) },
             )
             is Screen.AddPoi -> AddPoiScreen(screen.trip, screen.lat, screen.lon, screen.atMs, onDone = ::pop)
             is Screen.Poi -> PoiScreen(
@@ -99,6 +104,7 @@ private fun App() {
                 onOpenMedia = { paths, index -> push(Screen.Media(paths, index)) },
             )
             is Screen.Media -> MediaPreviewScreen(screen.paths, screen.index)
+            Screen.Drive -> DriveScreen(onDone = ::pop)
         }
     }
 }

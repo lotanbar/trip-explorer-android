@@ -25,6 +25,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddLocation
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FiberManualRecord
@@ -43,6 +45,8 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Switch
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
@@ -82,6 +86,8 @@ import com.lotanbar.tripexplorer.data.PoiStore
 import com.lotanbar.tripexplorer.data.Trips
 import com.lotanbar.tripexplorer.service.RecordingService
 import com.lotanbar.tripexplorer.service.RecordingState
+import com.lotanbar.tripexplorer.sync.Sync
+import com.lotanbar.tripexplorer.sync.statusLine
 import com.lotanbar.tripexplorer.ui.plan.PlanStops
 import com.lotanbar.tripexplorer.ui.theme.resolvedTextAlign
 import com.lotanbar.tripexplorer.ui.theme.resolvedTextDirection
@@ -95,6 +101,7 @@ import java.io.File
 fun MainScreen(
     onAddPoi: (trip: String, lat: Double, lon: Double, atMs: Long) -> Unit,
     onOpenPoi: (File) -> Unit,
+    onOpenDrive: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -116,6 +123,12 @@ fun MainScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     LaunchedEffect(Unit) { refresh++ }
+    // Drive sync: start it again if the switch was left on; re-read the folders when it changes files here.
+    LaunchedEffect(Unit) { Sync.resume(context) }
+    val syncStatus by Sync.status.collectAsStateWithLifecycle()
+    val syncChanges by Sync.changes.collectAsStateWithLifecycle()
+    LaunchedEffect(syncChanges) { if (syncChanges > 0) refresh++ }
+    var syncOn by remember { mutableStateOf(Sync.isOn(context)) }
 
     var showNewTrip by remember { mutableStateOf(trips.isEmpty()) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -256,6 +269,24 @@ fun MainScreen(
     // --- Layout: trip picker, POIs / Plans tabs, Add POI, recording controls ---
     // Recordings are listed in the PC app only; the phone just records them.
     Column(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp)) {
+        SyncRow(
+            on = syncOn,
+            line = if (!Sync.configured) "Not in this build" else statusLine(syncStatus.copy(running = syncOn && syncStatus.running)),
+            progress = if (syncStatus.busy && syncStatus.total > 0) {
+                if (syncStatus.bytesTotal > 0) syncStatus.bytesDone.toFloat() / syncStatus.bytesTotal else syncStatus.done.toFloat() / syncStatus.total
+            } else null,
+            error = syncStatus.error != null,
+            onToggle = { on ->
+                when {
+                    !on -> { Sync.setOn(context, false); syncOn = false }
+                    !Sync.configured -> message = "This build has no Google client, so Drive sync is off."
+                    !syncStatus.signedIn || syncStatus.folder == null -> onOpenDrive()
+                    else -> { Sync.setOn(context, true); syncOn = true }
+                }
+            },
+            onOpen = onOpenDrive,
+        )
+        Spacer(Modifier.height(8.dp))
         var expanded by remember { mutableStateOf(false) }
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }, modifier = Modifier.fillMaxWidth()) {
             val shown = currentTrip ?: "No trip"
@@ -306,6 +337,35 @@ fun MainScreen(
             onResume = { RecordingService.resume(context) },
             onStop = { RecordingService.stop(context) },
         )
+    }
+}
+
+/** The Drive sync switch and its status line; a thin bar shows progress while files go up or down. */
+@Composable
+private fun SyncRow(on: Boolean, line: String, progress: Float?, error: Boolean, onToggle: (Boolean) -> Unit, onOpen: () -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f).clickable(onClick = onOpen).padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (on) Icons.Default.Cloud else Icons.Default.CloudOff,
+                    contentDescription = null,
+                    tint = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(22.dp),
+                )
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    Text("Drive sync", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        line,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (error) Color(0xFFEF5350) else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                    )
+                }
+            }
+            Switch(checked = on, onCheckedChange = onToggle)
+        }
+        if (progress != null) LinearProgressIndicator(progress = { progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(3.dp))
     }
 }
 

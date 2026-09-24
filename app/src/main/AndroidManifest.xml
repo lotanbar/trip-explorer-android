@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
@@ -42,6 +44,16 @@
             android:name=".service.RecordingService"
             android:foregroundServiceType="location"
             android:exported="false" />
+
+        <!-- Drive sync runs as long as the Sync switch is on (a dataSync service would be cut off after 6 h a day). -->
+        <service
+            android:name=".sync.SyncService"
+            android:foregroundServiceType="specialUse"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the trips folder in sync with the user's Google Drive while the user's Sync switch is on" />
+        </service>
 
         <provider
             android:name="androidx.core.content.FileProvider"

@@ -196,6 +196,7 @@ class RecordingService : Service() {
         fileLock.withLock {
             kotlinx.coroutines.withContext(Dispatchers.IO) { runCatching { w.append(batch) } }
         }
+        com.lotanbar.tripexplorer.sync.Sync.poke() // with Drive sync on, the growing file goes up on every save
     }
 
     private fun startTicker() {

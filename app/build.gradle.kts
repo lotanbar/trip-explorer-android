@@ -13,6 +13,13 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+
+        // The Google OAuth client (Desktop type, shared with the PC app) is kept out of git in
+        // google_oauth.json at the repo root; without it Drive sync says it is not configured.
+        val oauth = rootProject.file("google_oauth.json").takeIf { it.exists() }?.readText().orEmpty()
+        fun oauthValue(key: String) = Regex("\"$key\"\\s*:\\s*\"([^\"]*)\"").find(oauth)?.groupValues?.get(1).orEmpty()
+        buildConfigField("String", "GOOGLE_CLIENT_ID", "\"${oauthValue("client_id")}\"")
+        buildConfigField("String", "GOOGLE_CLIENT_SECRET", "\"${oauthValue("client_secret")}\"")
     }
 
     buildTypes {
@@ -29,6 +36,11 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+
+    testOptions {
+        unitTests.all { it.environment("LIVE", System.getenv("LIVE") ?: "") }
     }
 }
 
@@ -59,4 +71,5 @@ dependencies {
     implementation(libs.camerax.view)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
+    testImplementation(libs.org.json)
 }
