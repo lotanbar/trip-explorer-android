@@ -144,7 +144,19 @@ class SyncService : Service() {
     }
 }
 
-/** One line about the sync, for the main screen and the notification. */
+/** A few words about the sync, for the main screen's top row. */
+fun shortStatus(s: SyncStatus): String = when {
+    !s.signedIn -> "Signed out"
+    s.folder == null -> "No folder"
+    s.error != null -> "Error"
+    s.busy && s.total > 0 -> "${s.done}/${s.total}"
+    s.busy -> "Checking"
+    !s.running -> "Off"
+    s.lastSync != null -> java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(s.lastSync))
+    else -> "On"
+}
+
+/** One line about the sync, for the Drive screen and the notification. */
 fun statusLine(s: SyncStatus): String = when {
     !s.signedIn -> s.error ?: "Not signed in"
     s.folder == null -> "No Drive folder picked"

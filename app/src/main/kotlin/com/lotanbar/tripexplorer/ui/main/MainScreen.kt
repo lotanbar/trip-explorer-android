@@ -45,6 +45,11 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.ui.text.style.TextOverflow
+import android.widget.Toast
+import com.lotanbar.tripexplorer.sync.shortStatus
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Switch
 import androidx.compose.material3.MaterialTheme
@@ -130,9 +135,10 @@ fun MainScreen(
     LaunchedEffect(syncChanges) { if (syncChanges > 0) refresh++ }
     var syncOn by remember { mutableStateOf(Sync.isOn(context)) }
 
-    // Asked for by the user; with no trips at all the dialog shows by itself, and goes once a trip exists
-    // (e.g. Drive sync brought one down).
+    // Only when asked for (Trip menu → + New trip). With no trip the app can still be looked around (plans);
+    // what needs a trip says so.
     var showNewTrip by remember { mutableStateOf(false) }
+    fun needTrip() = Toast.makeText(context, "Create a trip first: tap the trip name → + New trip", Toast.LENGTH_SHORT).show()
     var message by remember { mutableStateOf<String?>(null) }
     var fixJob by remember { mutableStateOf<Job?>(null) }
     var showBatteryDialog by remember { mutableStateOf(false) }
@@ -175,7 +181,7 @@ fun MainScreen(
     }
     fun onStartPressed() {
         when {
-            currentTrip == null -> showNewTrip = true
+            currentTrip == null -> needTrip()
             !hasLocationPermission(context) -> recordPermLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
             !isGpsEnabled(context) -> message = "Location is off. Turn it on in the phone's settings."
             else -> checkNotifAndStart()
@@ -197,7 +203,7 @@ fun MainScreen(
     }
     fun onAddPoiPressed() {
         when {
-            currentTrip == null -> showNewTrip = true
+            currentTrip == null -> needTrip()
             !hasLocationPermission(context) -> poiPermLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
             !isGpsEnabled(context) -> message = "Location is off. Turn it on in the phone's settings."
             else -> fetchFixAndAddPoi()
@@ -205,10 +211,10 @@ fun MainScreen(
     }
 
     // --- Dialogs ---
-    if (showNewTrip || trips.isEmpty()) {
+    if (showNewTrip) {
         NewTripDialog(
             taken = trips,
-            canDismiss = trips.isNotEmpty(),
+            canDismiss = true,
             onCreate = { name ->
                 Trips.create(context, name)
                 Trips.setCurrentTrip(context, name)
@@ -271,36 +277,26 @@ fun MainScreen(
     // --- Layout: trip picker, POIs / Plans tabs, Add POI, recording controls ---
     // Recordings are listed in the PC app only; the phone just records them.
     Column(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp)) {
-        SyncRow(
-            on = syncOn,
-            line = if (!Sync.configured) "Not in this build" else statusLine(syncStatus.copy(running = syncOn && syncStatus.running)),
-            progress = if (syncStatus.busy && syncStatus.total > 0) {
-                if (syncStatus.bytesTotal > 0) syncStatus.bytesDone.toFloat() / syncStatus.bytesTotal else syncStatus.done.toFloat() / syncStatus.total
-            } else null,
-            error = syncStatus.error != null,
-            onToggle = { on ->
-                when {
-                    !on -> { Sync.setOn(context, false); syncOn = false }
-                    !Sync.configured -> message = "This build has no Google client, so Drive sync is off."
-                    !syncStatus.signedIn || syncStatus.folder == null -> onOpenDrive()
-                    else -> { Sync.setOn(context, true); syncOn = true }
-                }
-            },
-            onOpen = onOpenDrive,
-        )
-        Spacer(Modifier.height(8.dp))
+        // One row: the trip (tap to switch or add one) · Drive sync (tap for its screen) and its switch.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         var expanded by remember { mutableStateOf(false) }
-        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }, modifier = Modifier.fillMaxWidth()) {
+        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }, modifier = Modifier.weight(1f)) {
             val shown = currentTrip ?: "No trip"
-            OutlinedTextField(
-                value = shown,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("Trip") },
-                textStyle = MaterialTheme.typography.bodyLarge.copy(textDirection = shown.resolvedTextDirection(), textAlign = shown.resolvedTextAlign()),
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
-            )
+            Row(
+                Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    shown,
+                    style = MaterialTheme.typography.titleLarge.copy(textDirection = shown.resolvedTextDirection()),
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (currentTrip == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                ExposedDropdownMenuDefaults.TrailingIcon(expanded)
+            }
             ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 trips.forEach { trip ->
                     DropdownMenuItem(
@@ -312,8 +308,31 @@ fun MainScreen(
                 DropdownMenuItem(text = { Text("+ New trip") }, onClick = { expanded = false; showNewTrip = true })
             }
         }
+        Spacer(Modifier.width(8.dp))
+        SyncStatus(
+            on = syncOn,
+            line = if (!Sync.configured) "No client" else shortStatus(syncStatus.copy(running = syncOn && syncStatus.running)),
+            error = syncStatus.error != null,
+            onOpen = onOpenDrive,
+        )
+        Switch(
+            checked = syncOn,
+            onCheckedChange = { on ->
+                when {
+                    !on -> { Sync.setOn(context, false); syncOn = false }
+                    !Sync.configured -> message = "This build has no Google client, so Drive sync is off."
+                    !syncStatus.signedIn || syncStatus.folder == null -> onOpenDrive()
+                    else -> { Sync.setOn(context, true); syncOn = true }
+                }
+            },
+        )
+        }
+        val progress = if (syncStatus.busy && syncStatus.total > 0) {
+            if (syncStatus.bytesTotal > 0) syncStatus.bytesDone.toFloat() / syncStatus.bytesTotal else syncStatus.done.toFloat() / syncStatus.total
+        } else null
+        if (progress != null) LinearProgressIndicator(progress = { progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(3.dp))
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(4.dp))
         TabRow(selectedTabIndex = tab, containerColor = MaterialTheme.colorScheme.background) {
             Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("POIs (${pois.size})") })
             Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Plans (${plans.size})") })
@@ -326,48 +345,49 @@ fun MainScreen(
         }
 
         Spacer(Modifier.height(12.dp))
-        Button(onClick = ::onAddPoiPressed, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-            Icon(Icons.Default.AddLocation, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("Add POI", style = MaterialTheme.typography.titleMedium)
+        Row(Modifier.fillMaxWidth().height(56.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.weight(1f).fillMaxHeight()) {
+                RecordingCard(
+                    state = recordingState,
+                    onStart = ::onStartPressed,
+                    onPause = { RecordingService.pause(context) },
+                    onResume = { RecordingService.resume(context) },
+                    onStop = { RecordingService.stop(context) },
+                )
+            }
+            Button(
+                onClick = ::onAddPoiPressed,
+                contentPadding = PaddingValues(0.dp),
+                modifier = Modifier.size(56.dp),
+            ) {
+                Icon(Icons.Default.AddLocation, contentDescription = "Add POI", modifier = Modifier.size(28.dp))
+            }
         }
-        Spacer(Modifier.height(12.dp))
-        RecordingCard(
-            state = recordingState,
-            onStart = ::onStartPressed,
-            onPause = { RecordingService.pause(context) },
-            onResume = { RecordingService.resume(context) },
-            onStop = { RecordingService.stop(context) },
-        )
     }
 }
 
-/** The Drive sync switch and its status line; a thin bar shows progress while files go up or down. */
+/** Drive sync at a glance: a cloud and a few words (tap for the Drive screen, where errors are spelled out). */
 @Composable
-private fun SyncRow(on: Boolean, line: String, progress: Float?, error: Boolean, onToggle: (Boolean) -> Unit, onOpen: () -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Row(Modifier.weight(1f).clickable(onClick = onOpen).padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    if (on) Icons.Default.Cloud else Icons.Default.CloudOff,
-                    contentDescription = null,
-                    tint = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(22.dp),
-                )
-                Spacer(Modifier.width(10.dp))
-                Column {
-                    Text("Drive sync", style = MaterialTheme.typography.labelLarge)
-                    Text(
-                        line,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (error) Color(0xFFEF5350) else MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                    )
-                }
-            }
-            Switch(checked = on, onCheckedChange = onToggle)
-        }
-        if (progress != null) LinearProgressIndicator(progress = { progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(3.dp))
+private fun SyncStatus(on: Boolean, line: String, error: Boolean, onOpen: () -> Unit) {
+    Row(Modifier.clickable(onClick = onOpen).padding(horizontal = 4.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            if (on) Icons.Default.Cloud else Icons.Default.CloudOff,
+            contentDescription = "Drive sync",
+            tint = when {
+                error -> Color(0xFFEF5350)
+                on -> MaterialTheme.colorScheme.primary
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            line,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (error) Color(0xFFEF5350) else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+        Spacer(Modifier.width(4.dp))
     }
 }
 
@@ -475,13 +495,13 @@ private fun RecordingCard(
     when (state) {
         RecordingState.Idle -> Button(
             onClick = onStart,
-            modifier = Modifier.fillMaxWidth().height(56.dp),
+            modifier = Modifier.fillMaxSize(),
         ) {
             Icon(Icons.Default.FiberManualRecord, contentDescription = null, tint = Color(0xFFE53935))
             Spacer(Modifier.width(8.dp))
             Text("Start recording", style = MaterialTheme.typography.titleMedium)
         }
-        is RecordingState.Active -> Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), modifier = Modifier.fillMaxWidth().height(56.dp)) {
+        is RecordingState.Active -> Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), modifier = Modifier.fillMaxSize()) {
                 var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
                 LaunchedEffect(Unit) { while (true) { delay(1000L); nowMs = System.currentTimeMillis() } }
                 Row(
@@ -497,7 +517,7 @@ private fun RecordingCard(
                             color = Color.White,
                         )
                         Text(
-                            if (state.paused) "paused · ${state.pointCount} points" else "${state.pointCount} points",
+                            if (state.paused) "paused · ${RecordingService.formatDistance(state.distanceM)}" else RecordingService.formatDistance(state.distanceM),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

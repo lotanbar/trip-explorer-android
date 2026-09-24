@@ -42,6 +42,8 @@ sealed class RecordingState {
         val startedAtMs: Long,
         val paused: Boolean,
         val pointCount: Int,
+        /** Distance walked so far (m): jitter under 5 m (or under the fix's accuracy) is not counted. */
+        val distanceM: Double = 0.0,
     ) : RecordingState()
 }
 
@@ -57,6 +59,8 @@ class RecordingService : Service() {
     private var writer: GpxWriter? = null
     private val pending = ArrayList<GpxPoint>()
     private var flushJob: Job? = null
+    /** The last fix the distance was counted from. */
+    private var anchor: Location? = null
     private var tickerJob: Job? = null
     private var stopping = false
 
@@ -131,7 +135,7 @@ class RecordingService : Service() {
         val (w, count) = fileLock.withLock { GpxWriter.open(file) to GpxWriter.countPoints(file) }
         writer = w
         prefs().edit().putString(KEY_ACTIVE_FILE, file.absolutePath).apply()
-        _state.value = RecordingState.Active(file, trip, startMs, paused = false, pointCount = count)
+        _state.value = RecordingState.Active(file, trip, startMs, paused = false, pointCount = count, distanceM = GpxWriter.distanceMeters(file))
         startGps()
         startTicker()
     }
@@ -142,6 +146,7 @@ class RecordingService : Service() {
         stopGps()
         flush()
         writer?.breakSegment()
+        anchor = null // a new segment: the walk while paused is not counted
         _state.value = st.copy(paused = true)
         notify("Recording paused", st.trip)
     }
@@ -179,12 +184,25 @@ class RecordingService : Service() {
         val st = state.value as? RecordingState.Active ?: return
         if (st.paused || stopping) return
         var last: Location? = null
+        var distance = st.distanceM
         for (loc in locations) {
             pending.add(GpxPoint(loc.latitude, loc.longitude, loc.time, if (loc.hasAccuracy()) loc.accuracy else Float.NaN))
             last = loc
+            val accuracy = if (loc.hasAccuracy()) loc.accuracy else 0f
+            if (accuracy > MAX_ACCURACY_FOR_DISTANCE) continue
+            val a = anchor
+            if (a == null) {
+                anchor = loc
+            } else {
+                val d = a.distanceTo(loc)
+                if (d >= maxOf(MIN_STEP_M, accuracy)) {
+                    distance += d
+                    anchor = loc
+                }
+            }
         }
         if (last != null) _lastFix.value = last
-        _state.value = st.copy(pointCount = st.pointCount + locations.size)
+        _state.value = st.copy(pointCount = st.pointCount + locations.size, distanceM = distance)
     }
 
     /** Writes whatever arrived since the last save. */
@@ -209,7 +227,7 @@ class RecordingService : Service() {
                 tick++
                 if (tick % SAVE_EVERY_SEC == 0) flush()
                 if (!st.paused) {
-                    notify("Recording: ${formatElapsed(System.currentTimeMillis() - st.startedAtMs)}", "${st.trip} · ${st.pointCount} points")
+                    notify("Recording: ${formatElapsed(System.currentTimeMillis() - st.startedAtMs)} · ${formatDistance(st.distanceM)}", "${st.trip} · ${st.pointCount} points")
                 }
             }
         }
@@ -278,6 +296,11 @@ class RecordingService : Service() {
 
         private val _state = MutableStateFlow<RecordingState>(RecordingState.Idle)
         val state: StateFlow<RecordingState> = _state
+
+        private const val MIN_STEP_M = 5f
+        private const val MAX_ACCURACY_FOR_DISTANCE = 30f
+
+        fun formatDistance(m: Double): String = if (m < 1000) "${m.toInt()} m" else String.format(java.util.Locale.US, "%.2f km", m / 1000)
 
         private val _lastFix = MutableStateFlow<Location?>(null)
         /** The newest fix while recording, for Add POI. */

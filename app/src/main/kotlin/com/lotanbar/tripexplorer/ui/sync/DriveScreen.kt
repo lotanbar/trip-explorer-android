@@ -115,6 +115,7 @@ fun DriveScreen(onDone: () -> Unit) {
             return@Column
         }
         Text(listOfNotNull(status.email, status.folder?.let { "syncs with “$it”" }).joinToString(" · "), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        status.error?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = Color(0xFFEF5350)) }
         Spacer(Modifier.height(8.dp))
         // Signed in again with a folder already picked: carry on with it (no new merge), or pick another below.
         status.folder?.let { folder ->

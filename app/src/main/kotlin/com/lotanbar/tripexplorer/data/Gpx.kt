@@ -171,5 +171,26 @@ class GpxWriter private constructor(val file: File, private var tailPos: Long, p
             while (i >= 0) { n++; i = text.indexOf("</trkpt>", i + 8) }
             return n
         }
+
+        /** Distance along [file]'s points (m), segment by segment, with the recorder's rule: steps under 5 m (or
+         * under the point's accuracy) are jitter; points less accurate than 30 m are skipped. */
+        fun distanceMeters(file: File): Double {
+            val text = runCatching { String(file.readBytes(), Charsets.ISO_8859_1) }.getOrNull() ?: return 0.0
+            var total = 0.0
+            for (seg in text.split("<trkseg>").drop(1)) {
+                var anchor: DoubleArray? = null
+                for (m in Regex("""<trkpt lat="([-\d.]+)" lon="([-\d.]+)">(?:(?!</trkpt>).)*?(?:<accuracy>(\d+)</accuracy>)?(?:(?!</trkpt>).)*</trkpt>""").findAll(seg)) {
+                    val lat = m.groupValues[1].toDouble()
+                    val lon = m.groupValues[2].toDouble()
+                    val acc = m.groupValues[3].toDoubleOrNull() ?: 0.0
+                    if (acc > 30) continue
+                    val a = anchor
+                    if (a == null) { anchor = doubleArrayOf(lat, lon); continue }
+                    val d = FloatArray(1).also { android.location.Location.distanceBetween(a[0], a[1], lat, lon, it) }[0].toDouble()
+                    if (d >= maxOf(5.0, acc)) { total += d; anchor = doubleArrayOf(lat, lon) }
+                }
+            }
+            return total
+        }
     }
 }
