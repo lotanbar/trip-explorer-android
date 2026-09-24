@@ -130,7 +130,9 @@ fun MainScreen(
     LaunchedEffect(syncChanges) { if (syncChanges > 0) refresh++ }
     var syncOn by remember { mutableStateOf(Sync.isOn(context)) }
 
-    var showNewTrip by remember { mutableStateOf(trips.isEmpty()) }
+    // Asked for by the user; with no trips at all the dialog shows by itself, and goes once a trip exists
+    // (e.g. Drive sync brought one down).
+    var showNewTrip by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var fixJob by remember { mutableStateOf<Job?>(null) }
     var showBatteryDialog by remember { mutableStateOf(false) }
@@ -203,7 +205,7 @@ fun MainScreen(
     }
 
     // --- Dialogs ---
-    if (showNewTrip) {
+    if (showNewTrip || trips.isEmpty()) {
         NewTripDialog(
             taken = trips,
             canDismiss = trips.isNotEmpty(),
