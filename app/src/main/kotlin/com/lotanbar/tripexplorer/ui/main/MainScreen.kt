@@ -25,6 +25,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddLocation
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -80,6 +82,7 @@ import com.lotanbar.tripexplorer.data.PoiStore
 import com.lotanbar.tripexplorer.data.Trips
 import com.lotanbar.tripexplorer.service.RecordingService
 import com.lotanbar.tripexplorer.service.RecordingState
+import com.lotanbar.tripexplorer.ui.plan.PlanStops
 import com.lotanbar.tripexplorer.ui.theme.resolvedTextAlign
 import com.lotanbar.tripexplorer.ui.theme.resolvedTextDirection
 import kotlinx.coroutines.Job
@@ -92,7 +95,6 @@ import java.io.File
 fun MainScreen(
     onAddPoi: (trip: String, lat: Double, lon: Double, atMs: Long) -> Unit,
     onOpenPoi: (File) -> Unit,
-    onOpenPlan: (File) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -286,7 +288,7 @@ fun MainScreen(
         Box(Modifier.fillMaxWidth().weight(1f)) {
             when (tab) {
                 0 -> PoiList(pois, onOpenPoi)
-                else -> PlanList(plans, onOpenPlan)
+                else -> PlanList(plans)
             }
         }
 
@@ -354,28 +356,47 @@ private fun PoiList(pois: List<Poi>, onOpen: (File) -> Unit) {
     }
 }
 
-/** Every plan in trips/plans/; the phone only reads them, they are made on the PC. */
+/** Every plan in trips/plans/; the phone only reads them, they are made on the PC. Tapping a plan drops its stops down under it. */
 @Composable
-private fun PlanList(plans: List<File>, onOpen: (File) -> Unit) {
+private fun PlanList(plans: List<File>) {
     if (plans.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text("No plans yet. Plans are made in the PC app.", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
         }
         return
     }
+    var open by rememberSaveable { mutableStateOf(listOf<String>()) }
     LazyColumn(Modifier.fillMaxSize()) {
         items(plans, key = { it.absolutePath }) { file ->
             val name = Plans.nameOf(file)
             val count = remember(file, file.lastModified()) { Plans.read(file).size }
-            Column(Modifier.fillMaxWidth().clickable { onOpen(file) }.padding(vertical = 10.dp)) {
-                Text(
-                    name,
-                    style = MaterialTheme.typography.bodyLarge.copy(textDirection = name.resolvedTextDirection(), textAlign = name.resolvedTextAlign()),
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.fillMaxWidth(),
+            val expanded = file.absolutePath in open
+            Row(
+                Modifier.fillMaxWidth()
+                    .clickable { open = if (expanded) open - file.absolutePath else open + file.absolutePath }
+                    .padding(vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        name,
+                        style = MaterialTheme.typography.bodyLarge.copy(textDirection = name.resolvedTextDirection(), textAlign = name.resolvedTextAlign()),
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        if (expanded && count > 0) "$count stop${if (count != 1) "s" else ""} · tap one to navigate with Waze" else "$count stop${if (count != 1) "s" else ""}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Icon(
+                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Text("$count stop${if (count != 1) "s" else ""}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            if (expanded) PlanStops(file)
             HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
         }
     }

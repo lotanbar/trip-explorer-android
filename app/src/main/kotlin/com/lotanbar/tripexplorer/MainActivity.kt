@@ -22,7 +22,6 @@ import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Modifier
 import com.lotanbar.tripexplorer.ui.main.MainScreen
 import com.lotanbar.tripexplorer.ui.permission.StoragePermissionScreen
-import com.lotanbar.tripexplorer.ui.plan.PlanScreen
 import com.lotanbar.tripexplorer.ui.poi.AddPoiScreen
 import com.lotanbar.tripexplorer.ui.poi.MediaPreviewScreen
 import com.lotanbar.tripexplorer.ui.poi.PoiScreen
@@ -34,7 +33,6 @@ sealed class Screen {
     data class AddPoi(val trip: String, val lat: Double, val lon: Double, val atMs: Long) : Screen()
     data class Poi(val dir: File) : Screen()
     data class Media(val paths: List<String>, val index: Int) : Screen()
-    data class Plan(val file: File) : Screen()
 
     /** Encoded for the saved instance state, so the stack survives process death (e.g. under the camera). */
     fun encode(): List<String> = when (this) {
@@ -42,7 +40,6 @@ sealed class Screen {
         is AddPoi -> listOf("add", trip, lat.toString(), lon.toString(), atMs.toString())
         is Poi -> listOf("poi", dir.absolutePath)
         is Media -> listOf("media", index.toString()) + paths
-        is Plan -> listOf("plan", file.absolutePath)
     }
 
     companion object {
@@ -50,7 +47,6 @@ sealed class Screen {
             "add" -> AddPoi(parts[1], parts[2].toDouble(), parts[3].toDouble(), parts[4].toLong())
             "poi" -> Poi(File(parts[1]))
             "media" -> Media(parts.drop(2), parts[1].toInt())
-            "plan" -> Plan(File(parts[1]))
             else -> Main
         }
     }
@@ -95,7 +91,6 @@ private fun App() {
             Screen.Main -> MainScreen(
                 onAddPoi = { trip, lat, lon, atMs -> push(Screen.AddPoi(trip, lat, lon, atMs)) },
                 onOpenPoi = { push(Screen.Poi(it)) },
-                onOpenPlan = { push(Screen.Plan(it)) },
             )
             is Screen.AddPoi -> AddPoiScreen(screen.trip, screen.lat, screen.lon, screen.atMs, onDone = ::pop)
             is Screen.Poi -> PoiScreen(
@@ -104,7 +99,6 @@ private fun App() {
                 onOpenMedia = { paths, index -> push(Screen.Media(paths, index)) },
             )
             is Screen.Media -> MediaPreviewScreen(screen.paths, screen.index)
-            is Screen.Plan -> PlanScreen(screen.file)
         }
     }
 }
