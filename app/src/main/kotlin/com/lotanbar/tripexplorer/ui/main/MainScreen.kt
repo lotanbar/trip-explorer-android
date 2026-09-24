@@ -102,7 +102,6 @@ fun MainScreen(
     val trips = remember(refresh) { Trips.list() }
     var currentTrip by remember(refresh) { mutableStateOf(Trips.currentTrip(context)) }
     val recordingState by RecordingService.state.collectAsStateWithLifecycle()
-    val recordings = remember(refresh, currentTrip, recordingState) { currentTrip?.let { Trips.recordings(it) } ?: emptyList() }
     val pois = remember(refresh, currentTrip) { currentTrip?.let { trip -> Trips.poiDirs(trip).mapNotNull { PoiStore.read(it) } } ?: emptyList() }
     // Plans are shared by all trips: whatever trip is picked, the tab lists trips/plans/.
     val plans = remember(refresh) { Plans.list() }
@@ -252,7 +251,8 @@ fun MainScreen(
         )
     }
 
-    // --- Layout: trip picker, POIs / Recordings / Plans tabs, Add POI, recording controls ---
+    // --- Layout: trip picker, POIs / Plans tabs, Add POI, recording controls ---
+    // Recordings are listed in the PC app only; the phone just records them.
     Column(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp)) {
         var expanded by remember { mutableStateOf(false) }
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }, modifier = Modifier.fillMaxWidth()) {
@@ -281,13 +281,11 @@ fun MainScreen(
         Spacer(Modifier.height(12.dp))
         TabRow(selectedTabIndex = tab, containerColor = MaterialTheme.colorScheme.background) {
             Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("POIs (${pois.size})") })
-            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Recordings (${recordings.size})") })
-            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Plans (${plans.size})") })
+            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Plans (${plans.size})") })
         }
         Box(Modifier.fillMaxWidth().weight(1f)) {
             when (tab) {
                 0 -> PoiList(pois, onOpenPoi)
-                1 -> RecordingList(recordings, recordingState, onFinish = ::finishIncomplete)
                 else -> PlanList(plans, onOpenPlan)
             }
         }
@@ -377,45 +375,6 @@ private fun PlanList(plans: List<File>, onOpen: (File) -> Unit) {
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text("$count stop${if (count != 1) "s" else ""}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
-        }
-    }
-}
-
-@Composable
-private fun RecordingList(recordings: List<File>, recordingState: RecordingState, onFinish: (File) -> Unit) {
-    val context = LocalContext.current
-    if (recordings.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("No recordings in this trip yet.", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
-        }
-        return
-    }
-    val activeFile = (recordingState as? RecordingState.Active)?.file
-    LazyColumn(Modifier.fillMaxSize()) {
-        items(recordings, key = { it.absolutePath }) { file ->
-            val incomplete = GpxWriter.isIncomplete(file)
-            val isActive = file == activeFile
-            Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                Text(file.name.removeSuffix(".gpx"), style = MaterialTheme.typography.bodyLarge)
-                if (incomplete) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            if (isActive) "recording now" else "incomplete",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (isActive) MaterialTheme.colorScheme.primary else Color(0xFFE0A050),
-                        )
-                        if (!isActive) {
-                            Spacer(Modifier.weight(1f))
-                            TextButton(
-                                enabled = recordingState is RecordingState.Idle,
-                                onClick = { RecordingService.resumeIncomplete(context, file) },
-                            ) { Text("Resume") }
-                            TextButton(onClick = { onFinish(file) }) { Text("Finish") }
-                        }
-                    }
-                }
             }
             HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
         }
