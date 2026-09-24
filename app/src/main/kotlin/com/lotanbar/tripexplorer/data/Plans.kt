@@ -4,14 +4,17 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.Locale
 
 /**
- * Plans are made on the PC and only read here: `trips/plans/<name>.txt`, one stop per line in
- * plan order, `lat, lon, name`. Each stop is driven with Waze, one at a time.
+ * Plans are made on the PC: `trips/plans/<name>.txt`, one stop per line in plan order,
+ * `lat, lon, name`, with `, visited` at the end once the stop is ticked as visited. The phone only
+ * changes that tick. Each stop is driven with Waze, one at a time.
  */
 object Plans {
-    data class Stop(val lat: Double, val lon: Double, val name: String)
+    data class Stop(val lat: Double, val lon: Double, val name: String, val visited: Boolean = false)
 
     val dir: File get() = File(Trips.root, Names.PLANS_FOLDER)
 
@@ -25,16 +28,41 @@ object Plans {
     fun read(file: File): List<Stop> = runCatching { parse(file.readText()) }.getOrDefault(emptyList())
 
     private val LINE = Regex("""^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*(?:,\s*(.*))?$""")
+    private val VISITED = Regex("""\s*,\s*visited\s*$""", RegexOption.IGNORE_CASE)
+    private const val VISITED_SUFFIX = ", visited"
 
     /** Lines that don't start with two numbers are skipped; a name may hold commas. */
-    fun parse(text: String): List<Stop> = text.lineSequence().mapNotNull { raw ->
-        val m = LINE.find(raw.trim()) ?: return@mapNotNull null
-        val lat = m.groupValues[1].toDoubleOrNull() ?: return@mapNotNull null
-        val lon = m.groupValues[2].toDoubleOrNull() ?: return@mapNotNull null
-        if (lat !in -90.0..90.0 || lon !in -180.0..180.0) return@mapNotNull null
-        val name = m.groupValues[3].trim().ifEmpty { "$lat, $lon" }
-        Stop(lat, lon, name)
-    }.toList()
+    fun parse(text: String): List<Stop> = text.lineSequence().mapNotNull { stopOf(it) }.toList()
+
+    private fun stopOf(raw: String): Stop? {
+        val m = LINE.find(raw.trim()) ?: return null
+        val lat = m.groupValues[1].toDoubleOrNull() ?: return null
+        val lon = m.groupValues[2].toDoubleOrNull() ?: return null
+        if (lat !in -90.0..90.0 || lon !in -180.0..180.0) return null
+        val rest = m.groupValues[3].trim()
+        val name = rest.replace(VISITED, "").trim().ifEmpty { "$lat, $lon" }
+        return Stop(lat, lon, name, VISITED.containsMatchIn(rest))
+    }
+
+    /**
+     * Ticks the `index`-th stop (as [parse] counts them) visited or not. Only that line of the file
+     * changes; everything else is kept as it is. Written to a temp file and renamed over the plan.
+     */
+    fun setVisited(file: File, index: Int, visited: Boolean): Boolean = runCatching {
+        val lines = file.readText().split(Regex("(?<=\n)")).toMutableList()
+        var n = -1
+        for (i in lines.indices) {
+            val body = lines[i].removeSuffix("\n").removeSuffix("\r")
+            if (stopOf(body) == null || ++n != index) continue
+            val bare = body.trimEnd().replace(VISITED, "")
+            lines[i] = (if (visited) bare + VISITED_SUFFIX else bare) + lines[i].substring(body.length)
+            break
+        }
+        val tmp = File(file.parentFile, file.name + ".tmp")
+        tmp.writeText(lines.joinToString(""))
+        Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        true
+    }.getOrDefault(false)
 
     const val WAZE_PACKAGE = "com.waze"
 

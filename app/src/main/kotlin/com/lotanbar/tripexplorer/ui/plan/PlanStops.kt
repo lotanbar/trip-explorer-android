@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -24,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.lotanbar.tripexplorer.data.Plans
 import com.lotanbar.tripexplorer.ui.theme.resolvedTextAlign
@@ -34,12 +36,13 @@ import java.util.Locale
 /**
  * One plan's stops, numbered, in the saved order, shown under the plan when it is expanded.
  * Tapping a stop opens Waze navigating to it; a Waze link holds one destination, so the stop
- * after the last one opened is highlighted as "next".
+ * after the last one opened is highlighted as "next". The box at the row's end ticks the stop as
+ * visited (a thin line through its name), written into the plan file so the PC sees it too.
  */
 @Composable
 fun PlanStops(file: File) {
     val context = LocalContext.current
-    val stops = remember(file, file.lastModified()) { Plans.read(file) }
+    var stops by remember(file, file.lastModified()) { mutableStateOf(Plans.read(file)) }
     var lastOpened by remember(file) { mutableIntStateOf(Plans.lastOpened(context, file)) }
     var message by remember { mutableStateOf<String?>(null) }
     val next = if (lastOpened + 1 < stops.size) lastOpened + 1 else -1
@@ -97,7 +100,8 @@ fun PlanStops(file: File) {
                         stop.name,
                         style = MaterialTheme.typography.bodyLarge.copy(textDirection = stop.name.resolvedTextDirection(), textAlign = stop.name.resolvedTextAlign()),
                         fontWeight = if (isNext) FontWeight.Bold else FontWeight.Medium,
-                        color = if (done && !isNext) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                        color = if ((done || stop.visited) && !isNext) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                        textDecoration = if (stop.visited) TextDecoration.LineThrough else null,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
@@ -109,6 +113,13 @@ fun PlanStops(file: File) {
                         color = if (isNext) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                Checkbox(
+                    checked = stop.visited,
+                    onCheckedChange = { checked ->
+                        if (Plans.setVisited(file, index, checked)) stops = stops.toMutableList().also { it[index] = stop.copy(visited = checked) }
+                        else message = "Could not save the plan file."
+                    },
+                )
             }
         }
     }
