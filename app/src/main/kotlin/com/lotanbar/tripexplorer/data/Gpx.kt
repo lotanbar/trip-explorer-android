@@ -163,6 +163,32 @@ class GpxWriter private constructor(val file: File, private var tailPos: Long, p
             return runCatching { Instant.parse(iso).toEpochMilli() }.getOrNull()
         }
 
+        /**
+         * Time recorded in [file] (ms): per segment, from its first point to its last. Pauses and the
+         * gap before a resume (each starts a new segment) are not counted.
+         */
+        fun recordedMs(file: File): Long {
+            val text = runCatching { String(file.readBytes(), Charsets.ISO_8859_1) }.getOrNull() ?: return 0
+            var total = 0L
+            for (seg in text.split("<trkseg>").drop(1)) {
+                val times = Regex("<time>([^<]+)</time>(?=(?:(?!<trkpt).)*?</trkpt>)").findAll(seg)
+                    .mapNotNull { runCatching { Instant.parse(it.groupValues[1].trim()).toEpochMilli() }.getOrNull() }.toList()
+                if (times.size >= 2) total += (times.last() - times.first()).coerceAtLeast(0)
+            }
+            return total
+        }
+
+        /** The last complete point in [file], or null when it has none. */
+        fun lastPoint(file: File): GpxPoint? {
+            val text = runCatching { String(file.readBytes(), Charsets.ISO_8859_1) }.getOrNull() ?: return null
+            val end = text.lastIndexOf("</trkpt>")
+            if (end < 0) return null
+            val start = text.lastIndexOf("<trkpt ", end)
+            if (start < 0) return null
+            val m = Regex("""lat="([-\d.]+)" lon="([-\d.]+)"""").find(text.substring(start, end)) ?: return null
+            return GpxPoint(m.groupValues[1].toDouble(), m.groupValues[2].toDouble(), lastPointTimeMs(file) ?: 0L, Float.NaN)
+        }
+
         /** Number of complete points in [file]. */
         fun countPoints(file: File): Int {
             val text = runCatching { String(file.readBytes(), Charsets.ISO_8859_1) }.getOrNull() ?: return 0

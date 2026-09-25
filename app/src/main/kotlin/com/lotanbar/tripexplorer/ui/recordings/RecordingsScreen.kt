@@ -1,5 +1,6 @@
 package com.lotanbar.tripexplorer.ui.recordings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,7 +45,8 @@ import java.io.File
 
 /**
  * Every recording of every trip, newest first under each trip, opened by a long press on the record
- * button. Incomplete ones (Stop never pressed) can be resumed or finished here, also after "Later".
+ * button. Incomplete ones (Stop never pressed) can be resumed or finished here, also after "Later";
+ * a finished one is continued with a tap. See [rememberResumeFlow] for the checks.
  * The Back gesture returns to the main screen.
  */
 @Composable
@@ -56,6 +58,7 @@ fun RecordingsScreen(onResumed: () -> Unit) {
     val byTrip = remember(refresh) { Trips.list().map { it to Trips.recordings(it) }.filter { it.second.isNotEmpty() } }
     val distances = remember { mutableStateMapOf<String, Double>() }
     var message by remember { mutableStateOf<String?>(null) }
+    val resumeFlow = rememberResumeFlow(onStarted = onResumed)
 
     LaunchedEffect(byTrip) {
         for ((_, files) in byTrip) for (f in files) {
@@ -89,7 +92,9 @@ fun RecordingsScreen(onResumed: () -> Unit) {
                 items(files, key = { it.absolutePath }) { file ->
                     val incomplete = GpxWriter.isIncomplete(file)
                     val recordingNow = file == active
-                    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                    // A finished recording: tap to continue it (asks first).
+                    val canContinue = !incomplete && recordingState is RecordingState.Idle
+                    Column(Modifier.fillMaxWidth().clickable(enabled = canContinue) { resumeFlow.start(file) }.padding(vertical = 8.dp)) {
                         Text(dateRange(file.name), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
                         Text(
                             listOfNotNull(
@@ -106,14 +111,7 @@ fun RecordingsScreen(onResumed: () -> Unit) {
                         if (incomplete && !recordingNow) {
                             Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 OutlinedButton(
-                                    onClick = {
-                                        if (recordingState !is RecordingState.Idle) {
-                                            message = "Stop the current recording first."
-                                        } else {
-                                            RecordingService.resumeIncomplete(context, file)
-                                            onResumed()
-                                        }
-                                    },
+                                    onClick = { resumeFlow.start(file) },
                                     modifier = Modifier.weight(1f),
                                 ) { Text("Resume") }
                                 OutlinedButton(

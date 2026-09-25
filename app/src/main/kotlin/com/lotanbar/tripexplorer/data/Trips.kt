@@ -49,6 +49,18 @@ object Trips {
         return target
     }
 
+    /**
+     * Continue: a finished recording goes back to "<date> <start> - recording.gpx", so it is
+     * incomplete again until Stop. Returns the renamed file, or null.
+     */
+    fun reopenFinished(context: Context, file: File): File? {
+        if (GpxWriter.startMsFromName(file.name) == null) return null
+        val target = File(file.parentFile, file.name.substring(0, 19) + GpxWriter.RECORDING_SUFFIX)
+        if (target.exists() || !file.renameTo(target)) return null
+        scan(context, target, file)
+        return target
+    }
+
     /** Tells Android's media scanner about written or renamed files, so USB (MTP) shows them. */
     fun scan(context: Context, vararg files: File) {
         if (files.isEmpty()) return

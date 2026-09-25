@@ -89,6 +89,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lotanbar.tripexplorer.data.GpxWriter
+import com.lotanbar.tripexplorer.ui.recordings.rememberResumeFlow
 import com.lotanbar.tripexplorer.data.Groups
 import com.lotanbar.tripexplorer.data.Names
 import com.lotanbar.tripexplorer.data.Plans
@@ -105,6 +106,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
+
+/** The launch question about incomplete recordings is asked once per app start. */
+private var launchQuestionAsked = false
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -148,9 +152,20 @@ fun MainScreen(
     var fixJob by remember { mutableStateOf<Job?>(null) }
     var showBatteryDialog by remember { mutableStateOf(false) }
 
-    // --- Incomplete recordings: ask once per file on launch ---
+    // While a recording runs, the screen shows its trip (a resumed recording may belong to another one).
+    val activeRecording = recordingState as? RecordingState.Active
+    LaunchedEffect(activeRecording?.file) {
+        val trip = activeRecording?.trip ?: return@LaunchedEffect
+        if (trip != currentTrip && trip in Trips.list()) { Trips.setCurrentTrip(context, trip); currentTrip = trip }
+    }
+    // Resume (and its checks: another trip, far from where it stopped).
+    val resumeFlow = rememberResumeFlow(onStarted = { refresh++ })
+
+    // --- Incomplete recordings: ask once per file on launch (not each time this screen comes back) ---
     var incompleteQueue by remember { mutableStateOf<List<File>>(emptyList()) }
     LaunchedEffect(Unit) {
+        if (launchQuestionAsked) return@LaunchedEffect
+        launchQuestionAsked = true
         val active = (RecordingService.state.value as? RecordingState.Active)?.file
         val dismissed = Trips.dismissedIncomplete(context)
         incompleteQueue = Trips.list().flatMap { Trips.recordings(it) }
@@ -229,7 +244,8 @@ fun MainScreen(
             onDismiss = { showNewTrip = false },
         )
     }
-    incompleteQueue.firstOrNull()?.let { file ->
+    // The file being recorded is never asked about (a resume may still be starting when the list is made).
+    incompleteQueue.firstOrNull { it != activeRecording?.file }?.let { file ->
         AlertDialog(
             onDismissRequest = { },
             title = { Text("Incomplete recording") },
@@ -237,15 +253,14 @@ fun MainScreen(
             confirmButton = {
                 Row {
                     TextButton(onClick = {
-                        incompleteQueue = incompleteQueue.drop(1)
-                        if (recordingState is RecordingState.Idle) RecordingService.resumeIncomplete(context, file)
-                        else message = "Stop the current recording first."
+                        incompleteQueue = incompleteQueue - file
+                        resumeFlow.start(file)
                     }) { Text("Resume") }
-                    TextButton(onClick = { incompleteQueue = incompleteQueue.drop(1); finishIncomplete(file) }) { Text("Finish") }
+                    TextButton(onClick = { incompleteQueue = incompleteQueue - file; finishIncomplete(file) }) { Text("Finish") }
                 }
             },
             dismissButton = {
-                TextButton(onClick = { Trips.dismissIncomplete(context, file); incompleteQueue = incompleteQueue.drop(1) }) { Text("Later") }
+                TextButton(onClick = { Trips.dismissIncomplete(context, file); incompleteQueue = incompleteQueue - file }) { Text("Later") }
             },
         )
     }
@@ -544,7 +559,7 @@ private fun RecordingCard(
                 ) {
                     Column {
                         Text(
-                            RecordingService.formatElapsed(nowMs - state.startedAtMs),
+                            RecordingService.formatElapsed(state.elapsedMs(nowMs)),
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = Color.White,

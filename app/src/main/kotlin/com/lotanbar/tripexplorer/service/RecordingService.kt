@@ -39,12 +39,18 @@ sealed class RecordingState {
     data class Active(
         val file: File,
         val trip: String,
-        val startedAtMs: Long,
+        /** Time recorded before the current stretch (pauses and the gap before a resume are not counted). */
+        val recordedMs: Long,
+        /** When the current stretch started; null while paused. */
+        val runningSinceMs: Long?,
         val paused: Boolean,
         val pointCount: Int,
         /** Distance walked so far (m): jitter under 5 m (or under the fix's accuracy) is not counted. */
         val distanceM: Double = 0.0,
-    ) : RecordingState()
+    ) : RecordingState() {
+        /** The time recorded so far: what the timer shows. */
+        fun elapsedMs(nowMs: Long): Long = recordedMs + (runningSinceMs?.let { (nowMs - it).coerceAtLeast(0) } ?: 0)
+    }
 }
 
 /**
@@ -123,7 +129,8 @@ class RecordingService : Service() {
         writer = fileLock.withLock { GpxWriter.create(file) }
         Trips.scan(this, file)
         prefs().edit().putString(KEY_ACTIVE_FILE, file.absolutePath).apply()
-        _state.value = RecordingState.Active(file, trip, now, paused = false, pointCount = 0)
+        anchor = null
+        _state.value = RecordingState.Active(file, trip, recordedMs = 0, runningSinceMs = now, paused = false, pointCount = 0)
         startGps()
         startTicker()
     }
@@ -131,11 +138,14 @@ class RecordingService : Service() {
     private suspend fun resumeIncomplete(file: File) {
         stopping = false
         val trip = file.parentFile?.parentFile?.name ?: ""
-        val startMs = GpxWriter.startMsFromName(file.name) ?: System.currentTimeMillis()
         val (w, count) = fileLock.withLock { GpxWriter.open(file) to GpxWriter.countPoints(file) }
         writer = w
         prefs().edit().putString(KEY_ACTIVE_FILE, file.absolutePath).apply()
-        _state.value = RecordingState.Active(file, trip, startMs, paused = false, pointCount = count, distanceM = GpxWriter.distanceMeters(file))
+        anchor = null
+        _state.value = RecordingState.Active(
+            file, trip, recordedMs = GpxWriter.recordedMs(file), runningSinceMs = System.currentTimeMillis(),
+            paused = false, pointCount = count, distanceM = GpxWriter.distanceMeters(file),
+        )
         startGps()
         startTicker()
     }
@@ -147,14 +157,14 @@ class RecordingService : Service() {
         flush()
         writer?.breakSegment()
         anchor = null // a new segment: the walk while paused is not counted
-        _state.value = st.copy(paused = true)
+        _state.value = st.copy(paused = true, recordedMs = st.elapsedMs(System.currentTimeMillis()), runningSinceMs = null)
         notify("Recording paused", st.trip)
     }
 
     private fun resume() {
         val st = state.value as? RecordingState.Active ?: return
         if (!st.paused || stopping) return
-        _state.value = st.copy(paused = false)
+        _state.value = st.copy(paused = false, runningSinceMs = System.currentTimeMillis())
         startGps()
     }
 
@@ -223,7 +233,7 @@ class RecordingService : Service() {
                 tick++
                 if (tick % SAVE_EVERY_SEC == 0) flush()
                 if (!st.paused) {
-                    notify("Recording: ${formatElapsed(System.currentTimeMillis() - st.startedAtMs)} · ${formatDistance(st.distanceM)}", "${st.trip} · ${st.pointCount} points")
+                    notify("Recording: ${formatElapsed(st.elapsedMs(System.currentTimeMillis()))} · ${formatDistance(st.distanceM)}", "${st.trip} · ${st.pointCount} points")
                 }
             }
         }

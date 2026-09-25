@@ -26,7 +26,7 @@ fun isGpsEnabled(context: Context): Boolean =
  * on just for this and off again after; while recording, this asks for its own unbatched fix.
  */
 @SuppressLint("MissingPermission")
-suspend fun currentGpsLocation(context: Context, timeoutMs: Long = 60_000L): Location? {
+suspend fun currentGpsLocation(context: Context, timeoutMs: Long = 30_000L): Location? {
     val pressedNanos = SystemClock.elapsedRealtimeNanos()
     val lm = context.getSystemService(LocationManager::class.java)
     return withTimeoutOrNull(timeoutMs) {

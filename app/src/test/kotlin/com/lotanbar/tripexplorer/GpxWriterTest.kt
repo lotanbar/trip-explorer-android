@@ -89,4 +89,19 @@ class GpxWriterTest {
         val end2 = java.time.LocalDateTime.of(2026, 9, 15, 1, 30, 48).atZone(zone).toInstant().toEpochMilli()
         assertEquals("2026-09-14 08-10-05 - 2026-09-15 01-30-48.gpx", GpxWriter.finishedFileName(sameDay, end2))
     }
+
+    @Test
+    fun recordedTimeSkipsPausesAndGaps() {
+        val file = File(tmp.root, "r.gpx")
+        val w = GpxWriter.create(file)
+        w.append(listOf(point(0), point(10), point(20)))
+        w.breakSegment() // paused for 100 s
+        w.append(listOf(point(120), point(125)))
+        val resumed = GpxWriter.open(file) // a crash, resumed 1000 s later
+        resumed.append(listOf(point(1125), point(1130)))
+        assertEquals(30_000L, GpxWriter.recordedMs(file))
+        val last = GpxWriter.lastPoint(file)!!
+        assertEquals(37.1 + 1130 * 1e-5, last.lat, 1e-6)
+        assertEquals(point(1130).timeMs, last.timeMs)
+    }
 }
