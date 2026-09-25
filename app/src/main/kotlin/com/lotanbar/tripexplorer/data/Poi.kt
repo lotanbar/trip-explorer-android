@@ -85,7 +85,7 @@ object PoiStore {
         return dir
     }
 
-    enum class MediaKind(val prefix: String, val ext: String) { PHOTO("IMG_", "jpg"), NOTE("note_", "m4a") }
+    enum class MediaKind(val prefix: String, val ext: String) { PHOTO("IMG_", "jpg"), NOTE("note_", "opus") }
 
     /** The next free media file: the number after the highest existing one; gaps are never filled. */
     fun nextMediaFile(dir: File, kind: MediaKind): File {

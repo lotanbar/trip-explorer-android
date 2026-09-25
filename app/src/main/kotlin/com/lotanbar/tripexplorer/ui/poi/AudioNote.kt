@@ -33,7 +33,7 @@ import com.lotanbar.tripexplorer.service.RecordingService
 import kotlinx.coroutines.delay
 import java.io.File
 
-/** Records an AAC audio note (.m4a) with the phone's microphone, inside the app. */
+/** Records an audio note with the phone's microphone, inside the app: Opus, 32 kbps, in an Ogg file (.opus). */
 class AudioNoteRecorder(private val context: Context) {
     private var recorder: MediaRecorder? = null
     var output: File? = null
@@ -43,10 +43,11 @@ class AudioNoteRecorder(private val context: Context) {
         target.parentFile?.mkdirs()
         val r = MediaRecorder(context)
         r.setAudioSource(MediaRecorder.AudioSource.MIC)
-        r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-        r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-        r.setAudioEncodingBitRate(96_000)
-        r.setAudioSamplingRate(44_100)
+        r.setOutputFormat(MediaRecorder.OutputFormat.OGG)
+        r.setAudioEncoder(MediaRecorder.AudioEncoder.OPUS)
+        r.setAudioChannels(1)
+        r.setAudioEncodingBitRate(32_000)
+        r.setAudioSamplingRate(48_000)
         r.setOutputFile(target.absolutePath)
         r.prepare()
         r.start()

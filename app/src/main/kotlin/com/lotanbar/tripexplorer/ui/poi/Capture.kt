@@ -10,7 +10,7 @@ object Capture {
     private fun dir(context: Context): File = File(context.cacheDir, "capture").apply { mkdirs() }
 
     fun newPhotoFile(context: Context): File = File(dir(context), "photo_${System.currentTimeMillis()}.jpg")
-    fun newNoteFile(context: Context): File = File(dir(context), "note_${System.currentTimeMillis()}.m4a")
+    fun newNoteFile(context: Context): File = File(dir(context), "note_${System.currentTimeMillis()}.opus")
 
     fun uriFor(context: Context, file: File): Uri =
         FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
