@@ -3,7 +3,7 @@
 Writes the `trips/` folders on the phone: GPS recordings as GPX, and POIs as folders with text files,
 photos and audio notes. Reads the plans the PC app saves in `trips/plans/` and drives them stop by stop with Waze. No map, no Google services, no Hilt. The PC app
 ([trip-explorer-pc](https://github.com/lotanbar/trip-explorer-pc)) shows the folders on a map; the spec
-lives there in `docs/Trip_Explorer_Spec.docx`.
+lives there in `Trip_Explorer_Spec.docx`.
 
 ## Build and install
 
@@ -15,7 +15,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 Needs JDK 17 and the Android SDK (compileSdk 37, minSdk 31). The APK is debug-signed; the app is not published.
 
 First launch asks for "All files access" (the app writes `/sdcard/trips`). Recording asks for precise
-location and notifications, audio notes for the microphone. The camera is the phone's own camera app.
+location and notifications, audio notes for the microphone, photos for the camera (the app's own, CameraX).
 
 Google Drive sync needs `google_oauth.json` at the repo root (the Desktop OAuth client shared with the PC app, kept
 out of git): `{"client_id": "...", "client_secret": "..."}`. Without it the build works and Drive sync says so.
@@ -30,16 +30,15 @@ out of git): `{"client_id": "...", "client_secret": "..."}`. Without it the buil
 | `data/Poi.kt` | POI folders: coordinates / datetime / description / group file / numbered media |
 | `data/Groups.kt` | The fixed group list (icons copied from the PC app as vector drawables) |
 | `service/RecordingService.kt` | Foreground service: GPS provider only, 1 fix/s, 10 s batching, saved every 10 s |
-| `ui/main/MainScreen.kt` | Trip picker, Start/Pause/Stop, Add POI, recordings list, incomplete-recording dialog |
-| `ui/poi/AddPoiScreen.kt` | GPS fix → camera → "Another photo / Done" → form with audio notes |
-| `ui/poi/PoiListScreen.kt`, `PoiScreen.kt` | All POIs by trip; edit name / description / group, add media, Show in map |
+| `ui/main/MainScreen.kt`, `ui/main/Location.kt` | Trip picker, Drive status and Sync, POIs / Plans tabs, Start/Pause/Stop, Add POI (a fresh GPS fix), incomplete-recording question |
+| `ui/recordings/RecordingsScreen.kt`, `ResumeFlow.kt` | Every recording (long press on the record control); Resume / Finish incomplete ones, Continue finished ones, with the trip and distance checks |
+| `ui/plan/PlanStops.kt` | A plan's stops under it in the Plans tab: Visited box, tap for Waze |
+| `ui/poi/AddPoiScreen.kt`, `CameraCapture.kt`, `AudioNote.kt` | GPS fix → in-app camera (Done / Skip) → form with Opus audio notes |
+| `ui/poi/PoiScreen.kt` | Edit name / description / group, add media, Show in map |
 | `sync/SyncPlan.kt`, `sync/SyncEngine.kt` | Drive sync: what to do per path (same rules as the PC app), and the loop that does it |
 | `sync/DriveApi.kt` | Drive REST calls and the browser sign-in (loopback + PKCE), plain HttpURLConnection |
-| `sync/Sync.kt`, `ui/sync/DriveScreen.kt` | The Sync switch, the foreground service, sign-in and the Drive folder picker |
-| `ui/poi/MediaPreviewScreen.kt` | Zoomable photos and audio player (copied from the reference app) |
-
-Copied from the reference app (mapping-solution): theme, storage permission screen, media preview, and the
-recording service basics. Everything else is new.
+| `sync/Sync.kt`, `ui/sync/DriveScreen.kt` | The Sync button, the foreground service, sign-in and the Drive folder picker |
+| `ui/poi/MediaPreviewScreen.kt` | Zoomable photos and audio player |
 
 ## Behaviour notes
 
@@ -48,5 +47,5 @@ recording service basics. Everything else is new.
   left. Tap the sync status for the last sync and what it did. Live test on the PC:
   `LIVE=1 ./gradlew testDebugUnitTest --tests '*SyncLiveTest*'`.
 - Nothing is ever deleted by hand in the app. Clearing a POI's group renames `group-x.txt` to `.group-x.txt` (hidden; both apps read it as "No group").
-- A recording killed without Stop stays `… - recording.gpx`; on the next launch the app offers Resume / Finish / Later. If the OS restarts the service, it resumes into the same file by itself.
+- A recording killed without Stop stays `… - recording.gpx`; on the next launch the app offers Resume / Finish / Later, and the Recordings screen (long press on the record control) always does. If the OS restarts the service, it resumes into the same file by itself.
 - Media taken before a POI has a name is kept in the app cache and moved into `media/` on save; the Add POI screen survives the camera killing the app.

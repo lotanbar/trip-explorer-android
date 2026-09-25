@@ -35,7 +35,7 @@ import coil3.compose.AsyncImage
 import com.lotanbar.tripexplorer.data.PoiStore
 import java.io.File
 
-/** Copied from the reference app: full-screen pager with zoomable photos and an audio player. */
+/** Full-screen pager with zoomable photos and an audio player. */
 @Composable
 fun MediaPreviewScreen(paths: List<String>, startIndex: Int) {
     if (paths.isEmpty()) return

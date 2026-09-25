@@ -26,7 +26,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 
-/** Copied from the reference app: asks for "All files access" and re-checks on every resume. */
+/** Asks for "All files access" and re-checks on every resume. */
 @Composable
 fun StoragePermissionScreen(onPermissionGranted: () -> Unit) {
     val context = LocalContext.current

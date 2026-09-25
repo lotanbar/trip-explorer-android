@@ -10,7 +10,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-// Copied as-is from the reference app (colors, fonts).
 val Primary = Color(0xFF2196F3)
 val PrimaryDark = Color(0xFF1565C0)
 val Surface = Color(0xFF1A1A1A)

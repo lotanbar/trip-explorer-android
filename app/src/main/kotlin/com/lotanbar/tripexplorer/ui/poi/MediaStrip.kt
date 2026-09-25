@@ -31,7 +31,7 @@ import com.lotanbar.tripexplorer.data.PoiStore
 import java.io.File
 
 /**
- * Full-width swipeable media pager, same look as the reference app's POI screen. The caller sets
+ * Full-width swipeable media pager for the POI screens. The caller sets
  * the height. Tap opens the full preview.
  */
 @Composable

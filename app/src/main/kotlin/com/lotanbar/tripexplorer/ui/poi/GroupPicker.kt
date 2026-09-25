@@ -21,7 +21,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.lotanbar.tripexplorer.data.Groups
 
-/** Group dropdown, same look as the reference app: icon + color in the field and in every item. */
+/** Group dropdown: icon + color in the field and in every item. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GroupPicker(selectedKey: String?, onSelected: (String?) -> Unit, modifier: Modifier = Modifier) {
