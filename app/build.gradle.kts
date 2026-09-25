@@ -11,8 +11,8 @@ android {
         applicationId = "com.lotanbar.tripexplorer"
         minSdk = 31
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
 
         // The Google OAuth client (Desktop type, shared with the PC app) is kept out of git in
         // google_oauth.json at the repo root; without it Drive sync says it is not configured.
