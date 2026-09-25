@@ -190,10 +190,12 @@ fun MainScreen(
 
     fun fetchFixAndAddPoi() {
         val trip = currentTrip ?: return
+        // The POI's time is the moment Add POI was pressed; its position, the first fix after that.
+        val pressedAtMs = System.currentTimeMillis()
         fixJob = scope.launch {
             val loc = currentGpsLocation(context)
             fixJob = null
-            if (loc != null) onAddPoi(trip, loc.latitude, loc.longitude, System.currentTimeMillis())
+            if (loc != null) onAddPoi(trip, loc.latitude, loc.longitude, pressedAtMs)
             else message = "Could not get a GPS fix. Try again outdoors."
         }
     }

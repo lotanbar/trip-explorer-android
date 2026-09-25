@@ -183,11 +183,9 @@ class RecordingService : Service() {
     private fun onFix(locations: List<Location>) {
         val st = state.value as? RecordingState.Active ?: return
         if (st.paused || stopping) return
-        var last: Location? = null
         var distance = st.distanceM
         for (loc in locations) {
             pending.add(GpxPoint(loc.latitude, loc.longitude, loc.time, if (loc.hasAccuracy()) loc.accuracy else Float.NaN))
-            last = loc
             val accuracy = if (loc.hasAccuracy()) loc.accuracy else 0f
             if (accuracy > MAX_ACCURACY_FOR_DISTANCE) continue
             val a = anchor
@@ -201,7 +199,6 @@ class RecordingService : Service() {
                 }
             }
         }
-        if (last != null) _lastFix.value = last
         _state.value = st.copy(pointCount = st.pointCount + locations.size, distanceM = distance)
     }
 
@@ -301,9 +298,6 @@ class RecordingService : Service() {
 
         fun formatDistance(m: Double): String = if (m < 1000) "${m.toInt()} m" else String.format(java.util.Locale.US, "%.2f km", m / 1000)
 
-        private val _lastFix = MutableStateFlow<Location?>(null)
-        /** The newest fix while recording, for Add POI. */
-        val lastFix: StateFlow<Location?> = _lastFix
 
         fun start(context: Context, trip: String) =
             ContextCompat.startForegroundService(context, intent(context, ACTION_START).putExtra(EXTRA_TRIP, trip))
