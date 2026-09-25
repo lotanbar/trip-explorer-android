@@ -37,6 +37,18 @@ object Trips {
             ?.filter { it.isFile && it.name.endsWith(".gpx", ignoreCase = true) }
             ?.sortedByDescending { it.name } ?: emptyList()
 
+    /**
+     * Finishes an incomplete recording: renames it with its last point's time (the start time when it
+     * has no points), the end's date added when that is on a later day. Returns the new file, or null.
+     */
+    fun finishIncomplete(context: Context, file: File): File? {
+        val endMs = GpxWriter.lastPointTimeMs(file) ?: GpxWriter.startMsFromName(file.name) ?: System.currentTimeMillis()
+        val target = File(file.parentFile, GpxWriter.finishedFileName(file.name, endMs))
+        if (!file.renameTo(target)) return null
+        scan(context, target, file)
+        return target
+    }
+
     /** Tells Android's media scanner about written or renamed files, so USB (MTP) shows them. */
     fun scan(context: Context, vararg files: File) {
         if (files.isEmpty()) return

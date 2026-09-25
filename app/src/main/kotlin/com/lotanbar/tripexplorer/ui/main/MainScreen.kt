@@ -9,6 +9,10 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -108,6 +112,7 @@ fun MainScreen(
     onAddPoi: (trip: String, lat: Double, lon: Double, atMs: Long) -> Unit,
     onOpenPoi: (File) -> Unit,
     onOpenDrive: () -> Unit,
+    onOpenRecordings: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -153,9 +158,7 @@ fun MainScreen(
     }
 
     fun finishIncomplete(file: File) {
-        val endMs = GpxWriter.lastPointTimeMs(file) ?: GpxWriter.startMsFromName(file.name) ?: System.currentTimeMillis()
-        val target = File(file.parentFile, GpxWriter.finishedFileName(file.name, endMs))
-        if (file.renameTo(target)) Trips.scan(context, target, file) else message = "Could not rename ${file.name}"
+        if (Trips.finishIncomplete(context, file) == null) message = "Could not rename ${file.name}"
         refresh++
     }
 
@@ -263,8 +266,8 @@ fun MainScreen(
     fixJob?.let { job ->
         AlertDialog(
             onDismissRequest = { },
-            title = { Text("Getting GPS fix…") },
-            text = { Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(24.dp)); Spacer(Modifier.width(16.dp)); Text("Waiting for the GPS") } },
+            title = { Text("Getting your location…") },
+            text = { Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(24.dp)); Spacer(Modifier.width(16.dp)); Text("Stay where you are until the GPS has your position.") } },
             confirmButton = { TextButton(onClick = { job.cancel(); fixJob = null }) { Text("Cancel") } },
         )
     }
@@ -372,6 +375,7 @@ fun MainScreen(
                     onPause = { RecordingService.pause(context) },
                     onResume = { RecordingService.resume(context) },
                     onStop = { RecordingService.stop(context) },
+                    onLongPress = onOpenRecordings,
                 )
             }
             Button(
@@ -504,23 +508,33 @@ private fun PlanList(plans: List<File>) {
 }
 
 @Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 private fun RecordingCard(
     state: RecordingState,
     onStart: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
     onStop: () -> Unit,
+    onLongPress: () -> Unit,
 ) {
+    // A long press on the record control (idle or recording) opens the Recordings screen.
     when (state) {
-        RecordingState.Idle -> Button(
-            onClick = onStart,
-            modifier = Modifier.fillMaxSize(),
+        RecordingState.Idle -> Surface(
+            shape = ButtonDefaults.shape,
+            color = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier.fillMaxSize().clip(ButtonDefaults.shape).combinedClickable(onClick = onStart, onLongClick = onLongPress),
         ) {
-            Icon(Icons.Default.FiberManualRecord, contentDescription = null, tint = Color(0xFFE53935))
-            Spacer(Modifier.width(8.dp))
-            Text("Start recording", style = MaterialTheme.typography.titleMedium)
+            Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.FiberManualRecord, contentDescription = null, tint = Color(0xFFE53935))
+                Spacer(Modifier.width(8.dp))
+                Text("Start recording", style = MaterialTheme.typography.titleMedium)
+            }
         }
-        is RecordingState.Active -> Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), modifier = Modifier.fillMaxSize()) {
+        is RecordingState.Active -> Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxSize().clip(CardDefaults.shape).combinedClickable(onClick = {}, onLongClick = onLongPress),
+        ) {
                 var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
                 LaunchedEffect(Unit) { while (true) { delay(1000L); nowMs = System.currentTimeMillis() } }
                 Row(

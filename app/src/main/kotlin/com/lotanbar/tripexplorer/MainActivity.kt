@@ -26,6 +26,7 @@ import com.lotanbar.tripexplorer.ui.poi.AddPoiScreen
 import com.lotanbar.tripexplorer.ui.poi.MediaPreviewScreen
 import com.lotanbar.tripexplorer.ui.poi.PoiScreen
 import com.lotanbar.tripexplorer.ui.sync.DriveScreen
+import com.lotanbar.tripexplorer.ui.recordings.RecordingsScreen
 import com.lotanbar.tripexplorer.ui.theme.TripExplorerTheme
 import java.io.File
 
@@ -35,6 +36,7 @@ sealed class Screen {
     data class Poi(val dir: File) : Screen()
     data class Media(val paths: List<String>, val index: Int) : Screen()
     data object Drive : Screen()
+    data object Recordings : Screen()
 
     /** Encoded for the saved instance state, so the stack survives process death (e.g. under the camera). */
     fun encode(): List<String> = when (this) {
@@ -43,6 +45,7 @@ sealed class Screen {
         is Poi -> listOf("poi", dir.absolutePath)
         is Media -> listOf("media", index.toString()) + paths
         Drive -> listOf("drive")
+        Recordings -> listOf("recordings")
     }
 
     companion object {
@@ -51,6 +54,7 @@ sealed class Screen {
             "poi" -> Poi(File(parts[1]))
             "media" -> Media(parts.drop(2), parts[1].toInt())
             "drive" -> Drive
+            "recordings" -> Recordings
             else -> Main
         }
     }
@@ -96,6 +100,7 @@ private fun App() {
                 onAddPoi = { trip, lat, lon, atMs -> push(Screen.AddPoi(trip, lat, lon, atMs)) },
                 onOpenPoi = { push(Screen.Poi(it)) },
                 onOpenDrive = { push(Screen.Drive) },
+                onOpenRecordings = { push(Screen.Recordings) },
             )
             is Screen.AddPoi -> AddPoiScreen(screen.trip, screen.lat, screen.lon, screen.atMs, onDone = ::pop)
             is Screen.Poi -> PoiScreen(
@@ -105,6 +110,7 @@ private fun App() {
             )
             is Screen.Media -> MediaPreviewScreen(screen.paths, screen.index)
             Screen.Drive -> DriveScreen(onDone = ::pop)
+            Screen.Recordings -> RecordingsScreen(onResumed = ::pop)
         }
     }
 }
