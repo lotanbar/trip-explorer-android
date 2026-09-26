@@ -1,5 +1,9 @@
 package com.lotanbar.tripexplorer.ui.main
 
+import com.lotanbar.tripexplorer.service.VoiceState
+import com.lotanbar.tripexplorer.service.VoiceRecordingService
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.foundation.layout.widthIn
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -117,6 +121,7 @@ fun MainScreen(
     onOpenPoi: (File) -> Unit,
     onOpenDrive: () -> Unit,
     onOpenRecordings: () -> Unit,
+    onOpenVoice: (trip: String) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -130,6 +135,9 @@ fun MainScreen(
     // Plans are shared by all trips: whatever trip is picked, the tab lists trips/plans/.
     val plans = remember(refresh) { Plans.list() }
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    // General recording: audio of the trip that belongs to no POI (the mic button).
+    val voiceState by VoiceRecordingService.state.collectAsStateWithLifecycle()
+    val activeVoice = voiceState as? VoiceState.Active
 
     // Re-read the folders whenever the app comes back (files may have changed over USB, or a POI was edited).
     DisposableEffect(lifecycleOwner) {
@@ -170,6 +178,34 @@ fun MainScreen(
         val dismissed = Trips.dismissedIncomplete(context)
         incompleteQueue = Trips.list().flatMap { Trips.recordings(it) }
             .filter { GpxWriter.isIncomplete(it) && it != active && it.absolutePath !in dismissed }
+    }
+
+    // --- General recording (mic button) ---
+    LaunchedEffect(voiceState) {
+        (voiceState as? VoiceState.Failed)?.let { message = it.message; VoiceRecordingService.clearFailure() }
+    }
+    fun startVoice() { currentTrip?.let { VoiceRecordingService.start(context, it) } }
+    val voiceNotifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { startVoice() }
+    fun checkNotifAndStartVoice() {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            voiceNotifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else startVoice()
+    }
+    val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) checkNotifAndStartVoice() else message = "Microphone permission is required to record audio."
+    }
+    fun onMicPressed() {
+        when {
+            activeVoice != null -> VoiceRecordingService.stop(context)
+            currentTrip == null -> needTrip()
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ->
+                micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            else -> checkNotifAndStartVoice()
+        }
+    }
+    fun onMicLongPressed() {
+        val trip = activeVoice?.trip ?: currentTrip
+        if (trip == null) needTrip() else onOpenVoice(trip)
     }
 
     fun finishIncomplete(file: File) {
@@ -400,12 +436,41 @@ fun MainScreen(
                     onLongPress = onOpenRecordings,
                 )
             }
+            MicButton(activeVoice, onClick = ::onMicPressed, onLongPress = ::onMicLongPressed)
             Button(
                 onClick = ::onAddPoiPressed,
                 contentPadding = PaddingValues(0.dp),
                 modifier = Modifier.size(56.dp),
             ) {
                 Icon(Icons.Default.AddLocation, contentDescription = "Add POI", modifier = Modifier.size(28.dp))
+            }
+        }
+    }
+}
+
+/**
+ * Tap: start / stop a general recording (red with the running time while it records).
+ * Long press: the trip's audio recordings.
+ */
+@Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+private fun MicButton(active: VoiceState.Active?, onClick: () -> Unit, onLongPress: () -> Unit) {
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(active?.file) { while (active != null) { nowMs = System.currentTimeMillis(); delay(500L) } }
+    Surface(
+        shape = ButtonDefaults.shape,
+        color = if (active != null) Color(0xFFC62828) else MaterialTheme.colorScheme.primary,
+        contentColor = if (active != null) Color.White else MaterialTheme.colorScheme.onPrimary,
+        modifier = Modifier.height(56.dp).widthIn(min = 56.dp).clip(ButtonDefaults.shape)
+            .combinedClickable(onClick = onClick, onLongClick = onLongPress),
+    ) {
+        Row(Modifier.padding(horizontal = if (active != null) 12.dp else 0.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+            if (active == null) {
+                Icon(Icons.Default.Mic, contentDescription = "Record audio", modifier = Modifier.size(28.dp))
+            } else {
+                Icon(Icons.Default.Stop, contentDescription = "Stop audio recording", modifier = Modifier.size(24.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(RecordingService.formatElapsed(nowMs - active.startedMs), fontWeight = FontWeight.Bold)
             }
         }
     }

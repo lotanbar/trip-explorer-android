@@ -6,6 +6,8 @@ package com.lotanbar.tripexplorer.data
  */
 object Names {
     const val RECORDINGS_FOLDER = "recordings"
+    /** Audio recordings of the trip that belong to no POI. */
+    const val GENERAL_RECORDINGS_FOLDER = "general_recordings"
     /** trips/plans/ holds plan files; it is not a trip, so a trip can't take the name. */
     const val PLANS_FOLDER = "plans"
 
@@ -31,6 +33,9 @@ object Names {
         if (name.uppercase() in RESERVED) return "$name is a reserved name on Windows."
         if (isPoi && name.equals(RECORDINGS_FOLDER, ignoreCase = true)) {
             return "\"recordings\" is reserved for the recordings folder."
+        }
+        if (isPoi && name.equals(GENERAL_RECORDINGS_FOLDER, ignoreCase = true)) {
+            return "\"general_recordings\" is reserved for the general recordings folder."
         }
         if (!isPoi && name.equals(PLANS_FOLDER, ignoreCase = true)) {
             return "\"plans\" is reserved for the plans folder."

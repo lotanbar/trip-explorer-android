@@ -9,6 +9,7 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -51,6 +52,11 @@
         <service
             android:name=".service.RecordingService"
             android:foregroundServiceType="location"
+            android:exported="false" />
+
+        <service
+            android:name=".service.VoiceRecordingService"
+            android:foregroundServiceType="microphone"
             android:exported="false" />
 
         <!-- Drive sync runs as long as the Sync switch is on (a dataSync service would be cut off after 6 h a day). -->

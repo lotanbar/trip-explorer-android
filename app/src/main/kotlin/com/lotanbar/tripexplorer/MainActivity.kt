@@ -1,5 +1,6 @@
 package com.lotanbar.tripexplorer
 
+import com.lotanbar.tripexplorer.ui.recordings.VoiceRecordingsScreen
 import android.os.Bundle
 import android.os.Environment
 import androidx.activity.ComponentActivity
@@ -37,6 +38,7 @@ sealed class Screen {
     data class Media(val paths: List<String>, val index: Int) : Screen()
     data object Drive : Screen()
     data object Recordings : Screen()
+    data class Voice(val trip: String) : Screen()
 
     /** Encoded for the saved instance state, so the stack survives process death (e.g. under the camera). */
     fun encode(): List<String> = when (this) {
@@ -46,6 +48,7 @@ sealed class Screen {
         is Media -> listOf("media", index.toString()) + paths
         Drive -> listOf("drive")
         Recordings -> listOf("recordings")
+        is Voice -> listOf("voice", trip)
     }
 
     companion object {
@@ -55,6 +58,7 @@ sealed class Screen {
             "media" -> Media(parts.drop(2), parts[1].toInt())
             "drive" -> Drive
             "recordings" -> Recordings
+            "voice" -> Voice(parts[1])
             else -> Main
         }
     }
@@ -101,6 +105,7 @@ private fun App() {
                 onOpenPoi = { push(Screen.Poi(it)) },
                 onOpenDrive = { push(Screen.Drive) },
                 onOpenRecordings = { push(Screen.Recordings) },
+                onOpenVoice = { push(Screen.Voice(it)) },
             )
             is Screen.AddPoi -> AddPoiScreen(screen.trip, screen.lat, screen.lon, screen.atMs, onDone = ::pop)
             is Screen.Poi -> PoiScreen(
@@ -111,6 +116,7 @@ private fun App() {
             is Screen.Media -> MediaPreviewScreen(screen.paths, screen.index)
             Screen.Drive -> DriveScreen(onDone = ::pop)
             Screen.Recordings -> RecordingsScreen(onResumed = ::pop)
+            is Screen.Voice -> VoiceRecordingsScreen(screen.trip, onOpenMedia = { paths, index -> push(Screen.Media(paths, index)) })
         }
     }
 }
