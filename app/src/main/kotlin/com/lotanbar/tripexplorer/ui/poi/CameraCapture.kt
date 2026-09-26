@@ -1,11 +1,17 @@
 package com.lotanbar.tripexplorer.ui.poi
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.pm.PackageManager
+import android.view.GestureDetector
+import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
@@ -18,6 +24,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -45,9 +52,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -56,11 +66,14 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil3.compose.AsyncImage
 import com.lotanbar.tripexplorer.data.Trips
 import java.io.File
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /**
  * In-app camera: take as many photos as you like, one after the other, then press Done.
+ * Tap the preview to focus there (a ring shows where), pinch to zoom.
  * Each photo is written by [newFile] as soon as it is taken; [onDone] gets all of them.
  * Back finishes too (keeping the photos taken so far).
  */
@@ -84,6 +97,45 @@ fun CameraCapture(newFile: () -> File, onDone: (List<File>) -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     val imageCapture = remember { ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build() }
     val previewView = remember { PreviewView(context).apply { scaleType = PreviewView.ScaleType.FILL_CENTER } }
+    var camera by remember { mutableStateOf<Camera?>(null) }
+    var focusAt by remember { mutableStateOf<Offset?>(null) }
+    var focusTap by remember { mutableStateOf(0) }
+    LaunchedEffect(focusTap) { if (focusAt != null) { delay(1200); focusAt = null } }
+
+    // Tap to focus and meter on that point (back to continuous focus after 5 s); pinch to zoom.
+    DisposableEffect(previewView) {
+        val taps = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent) = true
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                val cam = camera ?: return false
+                val point = previewView.meteringPointFactory.createPoint(e.x, e.y)
+                val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
+                    .setAutoCancelDuration(5, TimeUnit.SECONDS)
+                    .build()
+                cam.cameraControl.startFocusAndMetering(action)
+                focusAt = Offset(e.x, e.y)
+                focusTap++
+                return true
+            }
+        })
+        val pinch = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                val cam = camera ?: return false
+                val zoom = cam.cameraInfo.zoomState.value ?: return false
+                val ratio = (zoom.zoomRatio * detector.scaleFactor).coerceIn(zoom.minZoomRatio, zoom.maxZoomRatio)
+                cam.cameraControl.setZoomRatio(ratio)
+                return true
+            }
+        })
+        @SuppressLint("ClickableViewAccessibility")
+        val listener = android.view.View.OnTouchListener { _, event ->
+            pinch.onTouchEvent(event)
+            if (!pinch.isInProgress) taps.onTouchEvent(event)
+            true
+        }
+        previewView.setOnTouchListener(listener)
+        onDispose { previewView.setOnTouchListener(null) }
+    }
 
     BackHandler { onDone(taken) }
     DisposableEffect(Unit) {
@@ -98,7 +150,7 @@ fun CameraCapture(newFile: () -> File, onDone: (List<File>) -> Unit) {
         val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
         runCatching {
             provider.unbindAll()
-            provider.bindToLifecycle(lifecycleOwner, selector, preview, imageCapture)
+            camera = provider.bindToLifecycle(lifecycleOwner, selector, preview, imageCapture)
         }.onFailure { error = "Camera unavailable: ${it.message}" }
     }
 
@@ -127,6 +179,14 @@ fun CameraCapture(newFile: () -> File, onDone: (List<File>) -> Unit) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         if (granted) {
             AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+            focusAt?.let { at ->
+                val ring = 72.dp
+                val half = with(LocalDensity.current) { (ring / 2).roundToPx() }
+                Box(
+                    Modifier.offset { IntOffset(at.x.toInt() - half, at.y.toInt() - half) }
+                        .size(ring).border(2.dp, Color.White, CircleShape),
+                )
+            }
         } else {
             Text(
                 if (denied) "Camera permission is required to take photos." else "Waiting for camera permission…",
