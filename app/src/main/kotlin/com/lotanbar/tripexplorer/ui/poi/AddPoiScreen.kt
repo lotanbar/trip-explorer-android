@@ -36,11 +36,13 @@ import com.lotanbar.tripexplorer.data.Names
 import com.lotanbar.tripexplorer.data.PoiStore
 import com.lotanbar.tripexplorer.data.Trips
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 /**
  * Add POI: the position is already taken. Opens the in-app camera at once (take any number of
- * photos, then Done), then the form: media pager, name, description, group, photos and audio notes.
+ * photos, then Done), then the form: media pager, name (defaults to the date and time), description, group, photos and audio notes.
  */
 @Composable
 fun AddPoiScreen(trip: String, lat: Double, lon: Double, atMs: Long, onDone: () -> Unit) {
@@ -51,7 +53,8 @@ fun AddPoiScreen(trip: String, lat: Double, lon: Double, atMs: Long, onDone: () 
     var showCamera by rememberSaveable { mutableStateOf(true) }
     val photos = photoPaths.map(::File)
     val notes = notePaths.map(::File)
-    var name by rememberSaveable { mutableStateOf("") }
+    // Default name: when the position was taken (DD.MM.YYYY HH-MM-SS; Windows forbids ':' in folder names).
+    var name by rememberSaveable { mutableStateOf(SimpleDateFormat("dd.MM.yyyy HH-mm-ss", Locale.US).format(Date(atMs))) }
     var description by rememberSaveable { mutableStateOf("") }
     var groupKey by rememberSaveable { mutableStateOf<String?>(null) }
     var nameError by remember { mutableStateOf<String?>(null) }
