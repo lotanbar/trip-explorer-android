@@ -193,8 +193,15 @@ fun MainScreen(
             notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else checkBatteryAndStart()
     }
+    // Physical activity (steps) lets a recording switch GPS off while not moving; refusing it just keeps GPS on.
+    val activityLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { checkNotifAndStart() }
+    fun checkActivityAndStart() {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION) != PackageManager.PERMISSION_GRANTED) {
+            activityLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
+        } else checkNotifAndStart()
+    }
     val recordPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
-        if (result[Manifest.permission.ACCESS_FINE_LOCATION] == true) checkNotifAndStart()
+        if (result[Manifest.permission.ACCESS_FINE_LOCATION] == true) checkActivityAndStart()
         else message = "Precise location permission is required to record."
     }
     fun onStartPressed() {
@@ -202,7 +209,7 @@ fun MainScreen(
             currentTrip == null -> needTrip()
             !hasLocationPermission(context) -> recordPermLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
             !isGpsEnabled(context) -> message = "Location is off. Turn it on in the phone's settings."
-            else -> checkNotifAndStart()
+            else -> checkActivityAndStart()
         }
     }
 
@@ -565,7 +572,11 @@ private fun RecordingCard(
                             color = Color.White,
                         )
                         Text(
-                            if (state.paused) "paused · ${RecordingService.formatDistance(state.distanceM)}" else RecordingService.formatDistance(state.distanceM),
+                            when {
+                                state.paused -> "paused · ${RecordingService.formatDistance(state.distanceM)}"
+                                state.autoPaused -> "not moving · ${RecordingService.formatDistance(state.distanceM)}"
+                                else -> RecordingService.formatDistance(state.distanceM)
+                            },
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

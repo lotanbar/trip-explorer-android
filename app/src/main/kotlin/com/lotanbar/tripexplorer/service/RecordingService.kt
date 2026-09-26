@@ -8,11 +8,19 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.hardware.TriggerEvent
+import android.hardware.TriggerEventListener
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.location.LocationRequest
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.lotanbar.tripexplorer.MainActivity
@@ -47,6 +55,8 @@ sealed class RecordingState {
         val pointCount: Int,
         /** Distance walked so far (m): jitter under 5 m (or under the fix's accuracy) is not counted. */
         val distanceM: Double = 0.0,
+        /** Not moving for 10 minutes: GPS is off until the phone senses walking or riding. The timer keeps running. */
+        val autoPaused: Boolean = false,
     ) : RecordingState() {
         /** The time recorded so far: what the timer shows. */
         fun elapsedMs(nowMs: Long): Long = recordedMs + (runningSinceMs?.let { (nowMs - it).coerceAtLeast(0) } ?: 0)
@@ -54,9 +64,16 @@ sealed class RecordingState {
 }
 
 /**
- * Foreground service that records raw GPS fixes to a GPX file: one fix per second from the GPS
- * provider only, batched by up to 10 s when the phone supports it, saved to disk every 10 s.
+ * Foreground service that records location fixes to a GPX file: one fix per second from the fused
+ * provider (GPS helped by Wi-Fi and cell towers; the GPS provider if the phone has no fused one),
+ * batched by up to 10 s when the phone supports it, saved to disk every 10 s.
  * Pause switches GPS off and starts a new segment; Stop renames the file to its final name.
+ *
+ * Auto-pause: after 10 minutes with fewer than 20 steps and every accurate fix within 50 m of their
+ * middle, GPS goes off (same segment, the timer keeps running). It comes back on at 10 steps within
+ * a minute or when the significant-motion sensor fires (walking, a car, a train). Needs the step
+ * detector, the significant-motion sensor and the Physical activity permission; without them GPS
+ * simply stays on.
  */
 class RecordingService : Service() {
 
@@ -69,6 +86,26 @@ class RecordingService : Service() {
     private var anchor: Location? = null
     private var tickerJob: Job? = null
     private var stopping = false
+
+    /** When GPS last came on (elapsedRealtime ms): the still check waits a full window after it. */
+    private var gpsOnSinceMs = 0L
+    /** Steps (elapsedRealtime ms) and accurate fixes seen lately, for the still check and waking. */
+    private val steps = ArrayDeque<Long>()
+    private val recentFixes = ArrayDeque<Location>()
+    private var sensorsOn = false
+    private val sensorManager by lazy { getSystemService(SensorManager::class.java) }
+    private val stepSensor by lazy {
+        sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR, true) ?: sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
+    }
+    private val motionSensor by lazy { sensorManager.getDefaultSensor(Sensor.TYPE_SIGNIFICANT_MOTION) }
+
+    private val stepListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) = onStep()
+        override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
+    }
+    private val motionListener = object : TriggerEventListener() {
+        override fun onTrigger(event: TriggerEvent?) { scope.launch { wake() } }
+    }
 
     private val listener = object : LocationListener {
         override fun onLocationChanged(location: Location) = onFix(listOf(location))
@@ -132,6 +169,7 @@ class RecordingService : Service() {
         anchor = null
         _state.value = RecordingState.Active(file, trip, recordedMs = 0, runningSinceMs = now, paused = false, pointCount = 0)
         startGps()
+        startSensors()
         startTicker()
     }
 
@@ -147,6 +185,7 @@ class RecordingService : Service() {
             paused = false, pointCount = count, distanceM = GpxWriter.distanceMeters(file),
         )
         startGps()
+        startSensors()
         startTicker()
     }
 
@@ -154,10 +193,11 @@ class RecordingService : Service() {
         val st = state.value as? RecordingState.Active ?: return
         if (st.paused || stopping) return
         stopGps()
+        stopSensors()
         flush()
         writer?.breakSegment()
         anchor = null // a new segment: the walk while paused is not counted
-        _state.value = st.copy(paused = true, recordedMs = st.elapsedMs(System.currentTimeMillis()), runningSinceMs = null)
+        _state.value = st.copy(paused = true, autoPaused = false, recordedMs = st.elapsedMs(System.currentTimeMillis()), runningSinceMs = null)
         notify("Recording paused", st.trip)
     }
 
@@ -166,6 +206,7 @@ class RecordingService : Service() {
         if (!st.paused || stopping) return
         _state.value = st.copy(paused = false, runningSinceMs = System.currentTimeMillis())
         startGps()
+        startSensors()
     }
 
     private suspend fun stop() {
@@ -174,6 +215,7 @@ class RecordingService : Service() {
         stopping = true
         val stoppedAt = System.currentTimeMillis()
         stopGps()
+        stopSensors()
         tickerJob?.cancel()
         flush()
         val finished = File(st.file.parentFile, GpxWriter.finishedFileName(st.file.name, stoppedAt))
@@ -196,6 +238,7 @@ class RecordingService : Service() {
         var distance = st.distanceM
         for (loc in locations) {
             pending.add(GpxPoint(loc.latitude, loc.longitude, loc.time, if (loc.hasAccuracy()) loc.accuracy else Float.NaN))
+            if (loc.hasAccuracy() && loc.accuracy <= STILL_RADIUS_M) recentFixes.addLast(loc)
             val accuracy = if (loc.hasAccuracy()) loc.accuracy else 0f
             if (accuracy > MAX_ACCURACY_FOR_DISTANCE) continue
             val a = anchor
@@ -232,15 +275,77 @@ class RecordingService : Service() {
                 val st = state.value as? RecordingState.Active ?: break
                 tick++
                 if (tick % SAVE_EVERY_SEC == 0) flush()
-                if (!st.paused) {
+                if (!st.paused && !st.autoPaused) {
+                    checkStill()
+                    if ((state.value as? RecordingState.Active)?.autoPaused == true) continue
                     notify("Recording: ${formatElapsed(st.elapsedMs(System.currentTimeMillis()))} · ${formatDistance(st.distanceM)}", "${st.trip} · ${st.pointCount} points")
                 }
             }
         }
     }
 
+    /** Auto-pauses when the last 10 minutes of GPS had few steps and every accurate fix stayed close together. */
+    private fun checkStill() {
+        if (!sensorsOn) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - gpsOnSinceMs < STILL_WINDOW_MS) return
+        while (steps.isNotEmpty() && now - steps.first() > STILL_WINDOW_MS) steps.removeFirst()
+        while (recentFixes.isNotEmpty() && now - recentFixes.first().elapsedRealtimeNanos / 1_000_000 > STILL_WINDOW_MS) recentFixes.removeFirst()
+        if (steps.size >= STILL_MAX_STEPS) return
+        if (recentFixes.isNotEmpty()) {
+            val lat = recentFixes.sumOf { it.latitude } / recentFixes.size
+            val lon = recentFixes.sumOf { it.longitude } / recentFixes.size
+            val out = FloatArray(1)
+            for (f in recentFixes) {
+                Location.distanceBetween(lat, lon, f.latitude, f.longitude, out)
+                if (out[0] > STILL_RADIUS_M) return
+            }
+        }
+        val st = state.value as? RecordingState.Active ?: return
+        stopGps()
+        steps.clear()
+        runCatching { sensorManager.requestTriggerSensor(motionListener, motionSensor) }
+        _state.value = st.copy(autoPaused = true)
+        notify("Recording: not moving, GPS off", "${st.trip} · resumes when you move")
+        scope.launch { flush() }
+    }
+
+    private fun onStep() {
+        val now = SystemClock.elapsedRealtime()
+        steps.addLast(now)
+        val st = state.value as? RecordingState.Active ?: return
+        if (st.autoPaused && steps.count { now - it <= WAKE_WINDOW_MS } >= WAKE_STEPS) wake()
+    }
+
+    private fun wake() {
+        val st = state.value as? RecordingState.Active ?: return
+        if (!st.autoPaused || st.paused || stopping) return
+        runCatching { sensorManager.cancelTriggerSensor(motionListener, motionSensor) }
+        _state.value = st.copy(autoPaused = false)
+        startGps()
+    }
+
+    private fun startSensors() {
+        if (sensorsOn) return
+        val allowed = ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED
+        val step = stepSensor
+        if (!allowed || step == null || motionSensor == null) return
+        sensorsOn = sensorManager.registerListener(stepListener, step, SensorManager.SENSOR_DELAY_NORMAL)
+    }
+
+    private fun stopSensors() {
+        if (!sensorsOn) return
+        sensorsOn = false
+        runCatching { sensorManager.unregisterListener(stepListener) }
+        runCatching { sensorManager.cancelTriggerSensor(motionListener, motionSensor) }
+        steps.clear()
+    }
+
     @SuppressLint("MissingPermission")
     private fun startGps() {
+        gpsOnSinceMs = SystemClock.elapsedRealtime()
+        steps.clear()
+        recentFixes.clear()
         val lm = getSystemService(LocationManager::class.java)
         val request = LocationRequest.Builder(1_000L)
             .setMinUpdateDistanceMeters(0f)
@@ -248,7 +353,7 @@ class RecordingService : Service() {
             .setMaxUpdateDelayMillis(10_000L) // batching: used only if the phone supports it
             .build()
         runCatching {
-            lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, request, ContextCompat.getMainExecutor(this), listener)
+            lm.requestLocationUpdates(locationProvider(lm), request, ContextCompat.getMainExecutor(this), listener)
         }
         if (!lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) notify("GPS is off", "Turn location on to record")
     }
@@ -281,6 +386,7 @@ class RecordingService : Service() {
         // Process going away with a recording still open: save what we have (the file stays "recording").
         if (state.value is RecordingState.Active) runBlocking { flush() }
         stopGps()
+        stopSensors()
         scope.cancel()
         super.onDestroy()
     }
@@ -305,6 +411,16 @@ class RecordingService : Service() {
 
         private const val MIN_STEP_M = 5f
         private const val MAX_ACCURACY_FOR_DISTANCE = 30f
+
+        private const val STILL_WINDOW_MS = 10 * 60_000L
+        private const val STILL_MAX_STEPS = 20
+        private const val STILL_RADIUS_M = 50f
+        private const val WAKE_WINDOW_MS = 60_000L
+        private const val WAKE_STEPS = 10
+
+        /** The fused provider (GPS plus Wi-Fi and cell towers) when the phone has one, else plain GPS. */
+        fun locationProvider(lm: LocationManager): String =
+            if (lm.hasProvider(LocationManager.FUSED_PROVIDER)) LocationManager.FUSED_PROVIDER else LocationManager.GPS_PROVIDER
 
         fun formatDistance(m: Double): String = if (m < 1000) "${m.toInt()} m" else String.format(java.util.Locale.US, "%.2f km", m / 1000)
 

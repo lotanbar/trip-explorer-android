@@ -10,6 +10,7 @@ import android.location.LocationManager
 import android.location.LocationRequest
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
+import com.lotanbar.tripexplorer.service.RecordingService
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
@@ -21,7 +22,8 @@ fun isGpsEnabled(context: Context): Boolean =
     runCatching { context.getSystemService(LocationManager::class.java).isProviderEnabled(LocationManager.GPS_PROVIDER) }.getOrDefault(false)
 
 /**
- * The GPS position for Add POI: the first fix taken after the button was pressed, never an older one
+ * The position for Add POI (fused provider: GPS helped by Wi-Fi and cell towers, so it works indoors too):
+ * the first fix taken after the button was pressed, never an older one
  * (not the recording's last fix, not a cached one). If GPS is off (not recording, or paused), it is
  * on just for this and off again after; while recording, this asks for its own unbatched fix.
  */
@@ -42,7 +44,7 @@ suspend fun currentGpsLocation(context: Context, timeoutMs: Long = 30_000L): Loc
             }
             val request = LocationRequest.Builder(1_000L).setMinUpdateDistanceMeters(0f).setQuality(LocationRequest.QUALITY_HIGH_ACCURACY).build()
             runCatching {
-                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, request, ContextCompat.getMainExecutor(context), listener)
+                lm.requestLocationUpdates(RecordingService.locationProvider(lm), request, ContextCompat.getMainExecutor(context), listener)
             }.onFailure { if (cont.isActive) cont.resume(null) }
             cont.invokeOnCancellation { lm.removeUpdates(listener) }
         }

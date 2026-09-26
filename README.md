@@ -29,7 +29,7 @@ out of git): `{"client_id": "...", "client_secret": "..."}`. Without it the buil
 | `data/Gpx.kt` | GPX writer: always-valid file, segment per pause, resume of unfinished files, file names |
 | `data/Poi.kt` | POI folders: coordinates / datetime / description / group file / numbered media |
 | `data/Groups.kt` | The fixed group list (icons copied from the PC app as vector drawables) |
-| `service/RecordingService.kt` | Foreground service: GPS provider only, 1 fix/s, 10 s batching, saved every 10 s |
+| `service/RecordingService.kt` | Foreground service: fused provider, 1 fix/s, 10 s batching, saved every 10 s; auto-pause when not moving for 10 min |
 | `ui/main/MainScreen.kt`, `ui/main/Location.kt` | Trip picker, Drive status and Sync, POIs / Plans tabs, Start/Pause/Stop, Add POI (a fresh GPS fix), incomplete-recording question |
 | `ui/recordings/RecordingsScreen.kt`, `ResumeFlow.kt` | Every recording (long press on the record control); Resume / Finish incomplete ones, Continue finished ones, with the trip and distance checks |
 | `ui/plan/PlanStops.kt` | A plan's stops under it in the Plans tab: Visited box, tap for Waze |
