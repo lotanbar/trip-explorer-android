@@ -425,18 +425,8 @@ fun MainScreen(
         }
 
         Spacer(Modifier.height(12.dp))
+        // Add POI and the audio recorder on one row, the route recording under them across the whole width.
         Row(Modifier.fillMaxWidth().height(56.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(Modifier.weight(1f).fillMaxHeight()) {
-                RecordingCard(
-                    state = recordingState,
-                    onStart = ::onStartPressed,
-                    onPause = { RecordingService.pause(context) },
-                    onResume = { RecordingService.resume(context) },
-                    onStop = { RecordingService.stop(context) },
-                    onLongPress = onOpenRecordings,
-                )
-            }
-            MicButton(activeVoice, onClick = ::onMicPressed, onLongPress = ::onMicLongPressed)
             Button(
                 onClick = ::onAddPoiPressed,
                 contentPadding = PaddingValues(0.dp),
@@ -444,13 +434,27 @@ fun MainScreen(
             ) {
                 Icon(Icons.Default.AddLocation, contentDescription = "Add POI", modifier = Modifier.size(28.dp))
             }
+            Box(Modifier.weight(1f).fillMaxHeight()) {
+                MicButton(activeVoice, onClick = ::onMicPressed, onLongPress = ::onMicLongPressed)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Box(Modifier.fillMaxWidth().height(56.dp)) {
+            RecordingCard(
+                state = recordingState,
+                onStart = ::onStartPressed,
+                onPause = { RecordingService.pause(context) },
+                onResume = { RecordingService.resume(context) },
+                onStop = { RecordingService.stop(context) },
+                onLongPress = onOpenRecordings,
+            )
         }
     }
 }
 
 /**
- * Tap: start / stop a general recording (red with the running time while it records).
- * Long press: the trip's audio recordings.
+ * Like the POI's Record note: Record audio, then a red Stop with the running time.
+ * Tap: start / stop a general recording. Long press: the trip's audio recordings.
  */
 @Composable
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
@@ -459,19 +463,19 @@ private fun MicButton(active: VoiceState.Active?, onClick: () -> Unit, onLongPre
     LaunchedEffect(active?.file) { while (active != null) { nowMs = System.currentTimeMillis(); delay(500L) } }
     Surface(
         shape = ButtonDefaults.shape,
-        color = if (active != null) Color(0xFFC62828) else MaterialTheme.colorScheme.primary,
-        contentColor = if (active != null) Color.White else MaterialTheme.colorScheme.onPrimary,
-        modifier = Modifier.height(56.dp).widthIn(min = 56.dp).clip(ButtonDefaults.shape)
+        color = if (active != null) Color(0xFFC62828) else Color.Transparent,
+        contentColor = if (active != null) Color.White else MaterialTheme.colorScheme.primary,
+        border = if (active != null) null else ButtonDefaults.outlinedButtonBorder(),
+        modifier = Modifier.fillMaxSize().clip(ButtonDefaults.shape)
             .combinedClickable(onClick = onClick, onLongClick = onLongPress),
     ) {
-        Row(Modifier.padding(horizontal = if (active != null) 12.dp else 0.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-            if (active == null) {
-                Icon(Icons.Default.Mic, contentDescription = "Record audio", modifier = Modifier.size(28.dp))
-            } else {
-                Icon(Icons.Default.Stop, contentDescription = "Stop audio recording", modifier = Modifier.size(24.dp))
-                Spacer(Modifier.width(4.dp))
-                Text(RecordingService.formatElapsed(nowMs - active.startedMs), fontWeight = FontWeight.Bold)
-            }
+        Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+            Icon(if (active == null) Icons.Default.Mic else Icons.Default.Stop, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                if (active == null) "Record audio" else "Stop ${RecordingService.formatElapsed(nowMs - active.startedMs)}",
+                style = MaterialTheme.typography.titleMedium,
+            )
         }
     }
 }
