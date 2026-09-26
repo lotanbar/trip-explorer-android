@@ -9,6 +9,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.widget.Toast
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -53,11 +57,25 @@ object Sync {
         }
     }
 
-    /** The Sync button. */
+    /** The Sync button. Wi-Fi only: on mobile data (roaming or not) it just says so. */
     fun syncNow(context: Context) {
         engine(context)
         if (_status.value.busy) return
+        if (wifiNetwork(context) == null) {
+            Toast.makeText(context, "Sync works on Wi-Fi only. Connect to Wi-Fi and try again.", Toast.LENGTH_LONG).show()
+            return
+        }
         ContextCompat.startForegroundService(context, Intent(context, SyncService::class.java))
+    }
+
+    /** A connected Wi-Fi network with internet, or null. */
+    fun wifiNetwork(context: Context): Network? {
+        val cm = context.getSystemService(ConnectivityManager::class.java)
+        @Suppress("DEPRECATION")
+        return cm.allNetworks.firstOrNull { n ->
+            val caps = cm.getNetworkCapabilities(n) ?: return@firstOrNull false
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        }
     }
 }
 
@@ -76,6 +94,14 @@ class SyncService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIF_ID, build(Sync.status.value), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         if (watcher != null) return START_NOT_STICKY
+        // The whole pass goes over Wi-Fi only: if Wi-Fi drops, the pass fails instead of moving to mobile data.
+        val cm = getSystemService(ConnectivityManager::class.java)
+        val wifi = Sync.wifiNetwork(this)
+        if (wifi == null || !cm.bindProcessToNetwork(wifi)) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         val engine = Sync.engine(this)
         engine.root = Trips.root
         val before = Sync.status.value.lastSync
@@ -96,6 +122,7 @@ class SyncService : Service() {
                 if (finished) break
                 try { Thread.sleep(400) } catch (_: InterruptedException) { break }
             }
+            cm.bindProcessToNetwork(null)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }.apply { isDaemon = true; start() }
@@ -118,6 +145,7 @@ class SyncService : Service() {
 
     override fun onDestroy() {
         watcher?.interrupt()
+        getSystemService(ConnectivityManager::class.java).bindProcessToNetwork(null)
         super.onDestroy()
     }
 
