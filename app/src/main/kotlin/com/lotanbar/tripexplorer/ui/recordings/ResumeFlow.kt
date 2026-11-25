@@ -31,7 +31,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 /** Farther than this from where a recording stopped, resuming it asks first. */
-private const val FAR_KM = 50
+private const val FAR_KM = 5
 
 /**
  * Continuing a broken (incomplete) recording, with its safeguards: a recording of another trip than

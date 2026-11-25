@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
@@ -102,7 +103,7 @@ fun AddPoiPanel(modifier: Modifier = Modifier) {
     BackHandler {
         when {
             locating -> {}
-            st.phase == Phase.Category -> AddPoiSession.back()
+            st.phase == Phase.Category || st.phase == Phase.Camera -> AddPoiSession.back()
             else -> askDiscard = true
         }
     }
@@ -173,9 +174,15 @@ fun AddPoiPanel(modifier: Modifier = Modifier) {
                 Phase.Recording, Phase.Paused -> RecordingPane(now, onCancel = { askDiscard = true })
                 Phase.Review -> ReviewPane(
                     now,
+                    onAddPhoto = AddPoiSession::openCamera,
                     onRecordAgain = { AddPoiSession.recordAgain(context)?.let { message = it } },
                     onNext = AddPoiSession::next,
                     onCancel = { askDiscard = true },
+                )
+                // Add photo: the in-app camera in this area; Done / Back return to the note with the photos.
+                Phase.Camera -> CameraCapture(
+                    newFile = { AddPoiSession.newPhotoFile(context) },
+                    onDone = AddPoiSession::closeCamera,
                 )
                 Phase.Category -> CategoryPane(
                     selected = selected,
@@ -257,6 +264,7 @@ private fun Soundwave(levels: List<Float>, active: Boolean, modifier: Modifier =
 @Composable
 private fun ColumnScope.ReviewPane(
     st: AddPoiSession.State,
+    onAddPhoto: () -> Unit,
     onRecordAgain: () -> Unit,
     onNext: () -> Unit,
     onCancel: () -> Unit,
@@ -274,6 +282,13 @@ private fun ColumnScope.ReviewPane(
         )
     }
     Spacer(Modifier.weight(1f))
+    // Optional photos, above the bottom row.
+    OutlinedButton(onClick = onAddPhoto, modifier = Modifier.fillMaxWidth().height(56.dp)) {
+        Icon(Icons.Default.PhotoCamera, contentDescription = null)
+        Spacer(Modifier.width(8.dp))
+        Text(if (st.photos.isEmpty()) "Add photo" else "Add photo (${st.photos.size})", style = MaterialTheme.typography.titleMedium)
+    }
+    Spacer(Modifier.height(12.dp))
     // Cancel, Record again and Next in one row.
     Row(Modifier.fillMaxWidth().height(64.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         TextButton(onClick = onCancel, contentPadding = PaddingValues(4.dp), modifier = Modifier.weight(0.8f).fillMaxSize()) {
@@ -291,7 +306,7 @@ private fun ColumnScope.ReviewPane(
 
 /** Play / pause, with a progress bar and the time. */
 @Composable
-private fun NotePlayer(file: File, modifier: Modifier = Modifier) {
+internal fun NotePlayer(file: File, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val player = remember(file) {
         ExoPlayer.Builder(context).build().apply {

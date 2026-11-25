@@ -40,8 +40,34 @@ class PoiStoreTest {
     }
 
     @Test
+    fun photosAreNumberedFromOne() {
+        assertEquals("IMG_001.jpg", PoiStore.photoName(1))
+        assertEquals("IMG_012.jpg", PoiStore.photoName(12))
+    }
+
+    @Test
     fun gridOrderAndKeysMatchTheSpec() {
         assertEquals(listOf("viewpoints", "religion", "food", "history", "oddity", "none"), Categories.all.map { it.key })
         assertNotNull(Categories.byKey("none"))
+    }
+
+    @Test
+    fun dataTxtReadsBackWhatIsWritten() {
+        val map = PoiStore.parseData(PoiStore.dataText(45.4642, 9.19, at, "food", athens) + "extra: ignored\n")
+        assertEquals("food", map["category"])
+        assertEquals(45.4642 to 9.19, PoiStore.parseCoordinates(map["coordinates"]))
+    }
+
+    @Test
+    fun badCoordinatesReadAsNone() {
+        assertEquals(null, PoiStore.parseCoordinates("abc, 9"))
+        assertEquals(null, PoiStore.parseCoordinates("95, 9"))
+        assertEquals(null, PoiStore.parseCoordinates(null))
+    }
+
+    @Test
+    fun folderNameParsesBackToTheTapsTime() {
+        assertEquals(LocalDateTime.of(2026, 9, 14, 11, 32, 7), PoiStore.parseFolderTime("14.09.2026 11-32-07"))
+        assertEquals(null, PoiStore.parseFolderTime("recordings"))
     }
 }

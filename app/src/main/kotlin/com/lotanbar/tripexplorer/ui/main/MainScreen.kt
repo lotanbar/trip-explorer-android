@@ -1,6 +1,7 @@
 package com.lotanbar.tripexplorer.ui.main
 
 import android.Manifest
+import android.app.KeyguardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -24,10 +25,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddLocation
+import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.FiberManualRecord
@@ -73,7 +78,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.lotanbar.tripexplorer.ShortcutRequest
 import com.lotanbar.tripexplorer.data.Names
+import com.lotanbar.tripexplorer.data.PoiEntry
+import com.lotanbar.tripexplorer.data.PoiStore
 import com.lotanbar.tripexplorer.data.Trips
 import com.lotanbar.tripexplorer.service.RecordingService
 import com.lotanbar.tripexplorer.service.RecordingState
@@ -82,6 +90,7 @@ import com.lotanbar.tripexplorer.sync.progressLine
 import com.lotanbar.tripexplorer.sync.shortStatus
 import com.lotanbar.tripexplorer.ui.poi.AddPoiPanel
 import com.lotanbar.tripexplorer.ui.poi.AddPoiSession
+import com.lotanbar.tripexplorer.ui.poi.PoiList
 import com.lotanbar.tripexplorer.ui.recordings.recordingLabel
 import com.lotanbar.tripexplorer.ui.recordings.rememberResumeFlow
 import com.lotanbar.tripexplorer.ui.theme.resolvedTextAlign
@@ -94,13 +103,18 @@ private var launchQuestionAsked = false
 
 /**
  * The main screen: the trip and Drive sync on top, the route recording under them, and a large Add POI
- * button, which turns into the Add POI steps in place while a POI is being added. Nothing else: no lists
- * (see the spec's Main screen).
+ * button, which turns into the Add POI steps in place while a POI is being added. Swiping that area
+ * sideways shows the current trip's POI list (see the spec's Main screen).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(onOpenDrive: () -> Unit) {
+fun MainScreen(onOpenDrive: () -> Unit, onOpenPoi: (File) -> Unit) {
     val context = LocalContext.current
+    // Over the lock screen (the side button's Add POI), the Drive screen and Sync are not reachable.
+    // Checked at the tap, since the phone may have been unlocked meanwhile.
+    fun isLocked() = context.getSystemService(KeyguardManager::class.java).isKeyguardLocked
+    fun unlockFirst() = Toast.makeText(context, "Unlock the phone first", Toast.LENGTH_SHORT).show()
+    val openDrive: () -> Unit = { if (isLocked()) unlockFirst() else onOpenDrive() }
     val lifecycleOwner = LocalLifecycleOwner.current
 
     var refresh by remember { mutableIntStateOf(0) }
@@ -134,6 +148,17 @@ fun MainScreen(onOpenDrive: () -> Unit) {
         val trip = activeRecording?.trip ?: return@LaunchedEffect
         if (trip != currentTrip && trip in Trips.list()) { Trips.setCurrentTrip(context, trip); currentTrip = trip }
     }
+    // The POI list (the page beside Add POI); read again with the folders, and after each Add POI ends.
+    val pois: List<PoiEntry> = remember(refresh, currentTrip) { currentTrip?.let(PoiStore::list) ?: emptyList() }
+    LaunchedEffect(addingPoi == null) { if (addingPoi == null) refresh++ }
+    // Opened over the lock screen (the side button's Add POI): nothing but Add POI is reachable.
+    val locked = remember(refresh) { isLocked() }
+    // Battery optimization still on: a banner until it is turned off (checked again whenever the app comes back).
+    val batteryOptimized = remember(refresh) {
+        !context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)
+    }
+    val batteryBannerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { refresh++ }
+
     // Continue (and its checks: another trip, far from where it stopped).
     val resumeFlow = rememberResumeFlow(onStarted = { refresh++ })
 
@@ -216,6 +241,14 @@ fun MainScreen(onOpenDrive: () -> Unit) {
             )
             else -> beginPoi()
         }
+    }
+
+    // Opened through the "Add POI" entry (the side button's double press): start Add POI at once.
+    val shortcut by ShortcutRequest.requested.collectAsStateWithLifecycle()
+    LaunchedEffect(shortcut) {
+        if (!shortcut) return@LaunchedEffect
+        ShortcutRequest.requested.value = false
+        onAddPoiPressed()
     }
 
     // --- Dialogs ---
@@ -317,7 +350,7 @@ fun MainScreen(onOpenDrive: () -> Unit) {
                 ready = syncStatus.signedIn && syncStatus.folder != null,
                 line = if (!Sync.configured) "No client" else shortStatus(syncStatus),
                 error = syncStatus.error != null && !syncStatus.busy,
-                onOpen = onOpenDrive,
+                onOpen = openDrive,
             )
             // The Sync button: one pass, both ways.
             if (syncStatus.busy) {
@@ -327,8 +360,9 @@ fun MainScreen(onOpenDrive: () -> Unit) {
                     modifier = Modifier.size(56.dp),
                     onClick = {
                         when {
+                            isLocked() -> unlockFirst()
                             !Sync.configured -> message = "This build has no Google client, so Drive sync is off."
-                            !syncStatus.signedIn || syncStatus.folder == null -> onOpenDrive()
+                            !syncStatus.signedIn || syncStatus.folder == null -> openDrive()
                             else -> Sync.syncNow(context)
                         }
                     },
@@ -354,6 +388,28 @@ fun MainScreen(onOpenDrive: () -> Unit) {
             )
         }
 
+        if (batteryOptimized && !locked) {
+            Spacer(Modifier.height(8.dp))
+            Surface(
+                onClick = {
+                    batteryBannerLauncher.launch(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply { data = Uri.parse("package:${context.packageName}") })
+                },
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xFF4E3B12),
+                contentColor = Color(0xFFFFD54F),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.BatteryAlert, contentDescription = null, modifier = Modifier.size(22.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        "Battery optimization is on: a recording may stop while the screen is off. Tap to turn it off.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
+
         // Under the top bar, across the whole width: the route recording.
         Spacer(Modifier.height(12.dp))
         Box(Modifier.fillMaxWidth().height(84.dp)) {
@@ -364,7 +420,15 @@ fun MainScreen(onOpenDrive: () -> Unit) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Spacer(Modifier.height(8.dp))
         // The rest: a round Add POI button, which becomes the Add POI steps while a POI is being added.
-        Crossfade(targetState = addingPoi != null, label = "add-poi", modifier = Modifier.fillMaxWidth().weight(1f)) { adding ->
+        // Swiping sideways shows the POI list (not while adding a POI, nor over the lock screen).
+        val pager = rememberPagerState { 2 }
+        val canSwipe = addingPoi == null && !locked
+        LaunchedEffect(canSwipe) { if (!canSwipe && pager.currentPage != 0) pager.scrollToPage(0) }
+        HorizontalPager(pager, userScrollEnabled = canSwipe, modifier = Modifier.fillMaxWidth().weight(1f)) { page ->
+        if (page == 1) {
+            PoiList(currentTrip, pois, onOpen = { onOpenPoi(it.dir) }, modifier = Modifier.fillMaxSize())
+        } else
+        Crossfade(targetState = addingPoi != null, label = "add-poi", modifier = Modifier.fillMaxSize()) { adding ->
             if (adding) {
                 AddPoiPanel(Modifier.fillMaxSize())
             } else {
@@ -395,6 +459,19 @@ fun MainScreen(onOpenDrive: () -> Unit) {
                     )
                     // Keeps the button centred in the space, as if the bar above were not there.
                     Spacer(Modifier.height(88.dp))
+                }
+            }
+        }
+        }
+        // Two dots: which page is shown (Add POI · POI list).
+        if (canSwipe) {
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.Center) {
+                repeat(2) { i ->
+                    Box(
+                        Modifier.padding(horizontal = 4.dp).size(8.dp).clip(CircleShape).background(
+                            if (pager.currentPage == i) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                        ),
+                    )
                 }
             }
         }

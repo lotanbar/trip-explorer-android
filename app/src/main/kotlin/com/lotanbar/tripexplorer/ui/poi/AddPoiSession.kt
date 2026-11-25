@@ -27,7 +27,7 @@ import kotlin.math.pow
  * background while the note is recorded (the first fix taken after the tap; see [currentGpsLocation]).
  */
 object AddPoiSession {
-    enum class Phase { Recording, Paused, Review, Category }
+    enum class Phase { Recording, Paused, Review, Camera, Category }
 
     data class State(
         val trip: String,
@@ -40,6 +40,8 @@ object AddPoiSession {
         val recordedMs: Long,
         /** When the current stretch started; null unless recording. */
         val runningSinceMs: Long?,
+        /** Photos taken so far (optional), in the app's cache until Save. */
+        val photos: List<File> = emptyList(),
     ) {
         fun elapsedMs(nowMs: Long): Long = recordedMs + (runningSinceMs?.let { (nowMs - it).coerceAtLeast(0) } ?: 0)
     }
@@ -73,19 +75,19 @@ object AddPoiSession {
         fixJob = scope.launch {
             currentGpsLocation(app, timeoutMs = Long.MAX_VALUE)?.let { location = it; f.complete(it) }
         }
-        val err = startTake(app, trip, atMs)
+        val err = startTake(app, trip, atMs, photos = emptyList())
         if (err != null) end()
         return err
     }
 
-    private fun startTake(app: Context, trip: String, atMs: Long): String? {
+    private fun startTake(app: Context, trip: String, atMs: Long, photos: List<File>): String? {
         val file = File(noteDir(app), "take_${System.currentTimeMillis()}.opus")
         val r = NoteRecorder(app)
         return runCatching { r.start(file) }.fold(
             onSuccess = {
                 recorder = r
                 _levels.value = emptyList()
-                _state.value = State(trip, atMs, Phase.Recording, file, recordedMs = 0, runningSinceMs = System.currentTimeMillis())
+                _state.value = State(trip, atMs, Phase.Recording, file, recordedMs = 0, runningSinceMs = System.currentTimeMillis(), photos = photos)
                 startLevels()
                 null
             },
@@ -133,14 +135,14 @@ object AddPoiSession {
         _state.value = st.copy(phase = Phase.Review, take = file, recordedMs = st.elapsedMs(System.currentTimeMillis()), runningSinceMs = null)
     }
 
-    /** Throws this take away and starts a new one at once. The POI keeps its moment and its position. */
+    /** Throws this take away and starts a new one at once. The POI keeps its moment, its position and its photos. */
     fun recordAgain(context: Context): String? {
         val st = _state.value ?: return null
         levelJob?.cancel()
         recorder?.stop()
         recorder = null
         st.take?.delete()
-        val err = startTake(context.applicationContext, st.trip, st.atMs)
+        val err = startTake(context.applicationContext, st.trip, st.atMs, st.photos)
         if (err != null) _state.value = st.copy(phase = Phase.Review, take = null, recordedMs = 0, runningSinceMs = null)
         return err
     }
@@ -152,7 +154,23 @@ object AddPoiSession {
 
     fun back() {
         val st = _state.value ?: return
-        if (st.phase == Phase.Category) _state.value = st.copy(phase = Phase.Review)
+        if (st.phase == Phase.Category || st.phase == Phase.Camera) _state.value = st.copy(phase = Phase.Review)
+    }
+
+    /** Add photo: the camera, from the review step. */
+    fun openCamera() {
+        val st = _state.value ?: return
+        if (st.phase == Phase.Review) _state.value = st.copy(phase = Phase.Camera)
+    }
+
+    /** Where the camera writes the next photo (the app's cache, like the note). */
+    fun newPhotoFile(context: Context): File =
+        File(noteDir(context.applicationContext), "photo_${System.currentTimeMillis()}.jpg")
+
+    /** Back from the camera with the photos it took. */
+    fun closeCamera(taken: List<File>) {
+        val st = _state.value ?: return
+        if (st.phase == Phase.Camera) _state.value = st.copy(phase = Phase.Review, photos = st.photos + taken)
     }
 
     /** The position, if it is in already. */
@@ -165,18 +183,19 @@ object AddPoiSession {
     fun save(context: Context, categoryKey: String, at: Location): File {
         val st = _state.value ?: throw IllegalStateException("No POI is being added.")
         val note = st.take ?: throw IllegalStateException("There is no note.")
-        val dir = PoiStore.create(context, st.trip, st.atMs, at.latitude, at.longitude, categoryKey, note)
+        val dir = PoiStore.create(context, st.trip, st.atMs, at.latitude, at.longitude, categoryKey, note, st.photos)
         end()
         return dir
     }
 
-    /** Cancel: the take is deleted (it is only in the app's cache) and nothing is written. */
+    /** Cancel: the take and the photos are deleted (they are only in the app's cache) and nothing is written. */
     fun discard() {
         val st = _state.value
         levelJob?.cancel()
         recorder?.stop()
         recorder = null
         st?.take?.delete()
+        st?.photos?.forEach { it.delete() }
         end()
     }
 
