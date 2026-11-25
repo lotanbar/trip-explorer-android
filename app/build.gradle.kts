@@ -11,8 +11,8 @@ android {
         applicationId = "com.lotanbar.tripexplorer"
         minSdk = 31
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "2.0"
 
         // The Google OAuth client (Desktop type, shared with the PC app) is kept out of git in
         // google_oauth.json at the repo root; without it Drive sync says it is not configured.
@@ -62,13 +62,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.coil3.compose)
     implementation(libs.media3.exoplayer)
-    implementation(libs.media3.ui)
-    implementation(libs.camerax.core)
-    implementation(libs.camerax.camera2)
-    implementation(libs.camerax.lifecycle)
-    implementation(libs.camerax.view)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
     testImplementation(libs.org.json)

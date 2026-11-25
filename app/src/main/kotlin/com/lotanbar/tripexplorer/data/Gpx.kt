@@ -13,7 +13,7 @@ import kotlin.math.roundToInt
 data class GpxPoint(val lat: Double, val lon: Double, val timeMs: Long, val accuracyM: Float)
 
 /**
- * Writes the recording format: GPX 1.1, one <trk>, one <trkseg> per un-paused stretch.
+ * Writes the recording format: GPX 1.1, one <trk>, one <trkseg> per stretch (a resume starts a new one).
  *
  * The file is always valid: every save writes the new points followed by the closing tags, and the
  * next save overwrites those closing tags with more points. A crash can at most leave a half-written
@@ -42,7 +42,7 @@ class GpxWriter private constructor(val file: File, private var tailPos: Long, p
         tailPos += body.size
     }
 
-    /** Pause: the next points go into a new <trkseg>. */
+    /** The next points go into a new <trkseg> (recordings made before the Pause button was removed have these). */
     @Synchronized
     fun breakSegment() {
         needSegmentBreak = true

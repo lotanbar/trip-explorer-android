@@ -11,7 +11,7 @@ class NamesTest {
     fun allowsOrdinaryNames() {
         assertNull(Names.check("Kastro cave"))
         assertNull(Names.check("Πορτάρα"))
-        assertNull(Names.check("מערה", isPoi = true))
+        assertNull(Names.check("מערה"))
         assertNull(Names.check("Greece 2026", taken = listOf("Italy 2025")))
     }
 
@@ -40,22 +40,15 @@ class NamesTest {
     }
 
     @Test
-    fun refusesRecordingsForPoisOnly() {
-        assertNotNull(Names.check("recordings", isPoi = true))
-        assertNotNull(Names.check("Recordings", isPoi = true))
-        assertNull(Names.check("recordings", isPoi = false))
-    }
-
-    @Test
-    fun refusesPlansForTripsOnly() {
+    fun refusesPlans() {
         assertNotNull(Names.check("plans"))
         assertNotNull(Names.check("Plans"))
-        assertNull(Names.check("plans", isPoi = true))
+        assertNull(Names.check("recordings"))
     }
 
     @Test
     fun refusesDuplicatesCaseInsensitively() {
-        assertNotNull(Names.check("portara", taken = listOf("Portara"), isPoi = true))
+        assertNotNull(Names.check("portara", taken = listOf("Portara")))
         assertNotNull(Names.check("Greece", taken = listOf("greece")))
     }
 }

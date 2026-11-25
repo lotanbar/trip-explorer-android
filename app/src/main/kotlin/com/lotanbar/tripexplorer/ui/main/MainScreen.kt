@@ -1,22 +1,17 @@
 package com.lotanbar.tripexplorer.ui.main
 
-import com.lotanbar.tripexplorer.service.VoiceState
-import com.lotanbar.tripexplorer.service.VoiceRecordingService
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.foundation.layout.widthIn
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Surface
-import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,20 +24,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddLocation
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudOff
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FiberManualRecord
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -53,20 +44,11 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.ui.text.style.TextOverflow
-import android.widget.Toast
-import com.lotanbar.tripexplorer.sync.shortStatus
-import com.lotanbar.tripexplorer.sync.progressLine
-import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.Switch
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -77,69 +59,57 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.lotanbar.tripexplorer.data.GpxWriter
-import com.lotanbar.tripexplorer.ui.recordings.rememberResumeFlow
-import com.lotanbar.tripexplorer.data.Groups
 import com.lotanbar.tripexplorer.data.Names
-import com.lotanbar.tripexplorer.data.Plans
-import com.lotanbar.tripexplorer.data.Poi
-import com.lotanbar.tripexplorer.data.PoiStore
 import com.lotanbar.tripexplorer.data.Trips
 import com.lotanbar.tripexplorer.service.RecordingService
 import com.lotanbar.tripexplorer.service.RecordingState
 import com.lotanbar.tripexplorer.sync.Sync
-import com.lotanbar.tripexplorer.ui.plan.PlanStops
+import com.lotanbar.tripexplorer.sync.progressLine
+import com.lotanbar.tripexplorer.sync.shortStatus
+import com.lotanbar.tripexplorer.ui.poi.AddPoiPanel
+import com.lotanbar.tripexplorer.ui.poi.AddPoiSession
+import com.lotanbar.tripexplorer.ui.recordings.recordingLabel
+import com.lotanbar.tripexplorer.ui.recordings.rememberResumeFlow
 import com.lotanbar.tripexplorer.ui.theme.resolvedTextAlign
 import com.lotanbar.tripexplorer.ui.theme.resolvedTextDirection
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import java.io.File
 
-/** The launch question about incomplete recordings is asked once per app start. */
+/** The broken-recording question is asked at every app start (once per start, not each time this screen comes back). */
 private var launchQuestionAsked = false
 
+/**
+ * The main screen: the trip and Drive sync on top, the route recording under them, and a large Add POI
+ * button, which turns into the Add POI steps in place while a POI is being added. Nothing else: no lists
+ * (see the spec's Main screen).
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(
-    onAddPoi: (trip: String, lat: Double, lon: Double, atMs: Long) -> Unit,
-    onOpenPoi: (File) -> Unit,
-    onOpenDrive: () -> Unit,
-    onOpenRecordings: () -> Unit,
-    onOpenVoice: (trip: String) -> Unit,
-) {
+fun MainScreen(onOpenDrive: () -> Unit) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
 
     var refresh by remember { mutableIntStateOf(0) }
     val trips = remember(refresh) { Trips.list() }
     var currentTrip by remember(refresh) { mutableStateOf(Trips.currentTrip(context)) }
     val recordingState by RecordingService.state.collectAsStateWithLifecycle()
-    val pois = remember(refresh, currentTrip) { currentTrip?.let { trip -> Trips.poiDirs(trip).mapNotNull { PoiStore.read(it) } } ?: emptyList() }
-    // Plans are shared by all trips: whatever trip is picked, the tab lists trips/plans/.
-    val plans = remember(refresh) { Plans.list() }
-    var tab by rememberSaveable { mutableIntStateOf(0) }
-    // General recording: audio of the trip that belongs to no POI (the mic button).
-    val voiceState by VoiceRecordingService.state.collectAsStateWithLifecycle()
-    val activeVoice = voiceState as? VoiceState.Active
+    val addingPoi by AddPoiSession.state.collectAsStateWithLifecycle()
 
-    // Re-read the folders whenever the app comes back (files may have changed over USB, or a POI was edited).
+    // Re-read the folders whenever the app comes back (files may have changed over USB).
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) refresh++ }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -152,68 +122,22 @@ fun MainScreen(
     val syncChanges by Sync.changes.collectAsStateWithLifecycle()
     LaunchedEffect(syncChanges) { if (syncChanges > 0) refresh++ }
 
-    // Only when asked for (Trip menu → + New trip). With no trip the app can still be looked around (plans);
-    // what needs a trip says so.
+    // Only when asked for (Trip menu → + New trip); what needs a trip says so.
     var showNewTrip by remember { mutableStateOf(false) }
     fun needTrip() = Toast.makeText(context, "Create a trip first: tap the trip name → + New trip", Toast.LENGTH_SHORT).show()
     var message by remember { mutableStateOf<String?>(null) }
-    var fixJob by remember { mutableStateOf<Job?>(null) }
     var showBatteryDialog by remember { mutableStateOf(false) }
 
-    // While a recording runs, the screen shows its trip (a resumed recording may belong to another one).
+    // While a recording runs, the screen shows its trip (a continued broken recording may belong to another one).
     val activeRecording = recordingState as? RecordingState.Active
     LaunchedEffect(activeRecording?.file) {
         val trip = activeRecording?.trip ?: return@LaunchedEffect
         if (trip != currentTrip && trip in Trips.list()) { Trips.setCurrentTrip(context, trip); currentTrip = trip }
     }
-    // Resume (and its checks: another trip, far from where it stopped).
+    // Continue (and its checks: another trip, far from where it stopped).
     val resumeFlow = rememberResumeFlow(onStarted = { refresh++ })
 
-    // --- Incomplete recordings: ask once per file on launch (not each time this screen comes back) ---
-    var incompleteQueue by remember { mutableStateOf<List<File>>(emptyList()) }
-    LaunchedEffect(Unit) {
-        if (launchQuestionAsked) return@LaunchedEffect
-        launchQuestionAsked = true
-        val active = (RecordingService.state.value as? RecordingState.Active)?.file
-        val dismissed = Trips.dismissedIncomplete(context)
-        incompleteQueue = Trips.list().flatMap { Trips.recordings(it) }
-            .filter { GpxWriter.isIncomplete(it) && it != active && it.absolutePath !in dismissed }
-    }
-
-    // --- General recording (mic button) ---
-    LaunchedEffect(voiceState) {
-        (voiceState as? VoiceState.Failed)?.let { message = it.message; VoiceRecordingService.clearFailure() }
-    }
-    fun startVoice() { currentTrip?.let { VoiceRecordingService.start(context, it) } }
-    val voiceNotifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { startVoice() }
-    fun checkNotifAndStartVoice() {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            voiceNotifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else startVoice()
-    }
-    val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
-        if (ok) checkNotifAndStartVoice() else message = "Microphone permission is required to record audio."
-    }
-    fun onMicPressed() {
-        when {
-            activeVoice != null -> VoiceRecordingService.stop(context)
-            currentTrip == null -> needTrip()
-            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ->
-                micLauncher.launch(Manifest.permission.RECORD_AUDIO)
-            else -> checkNotifAndStartVoice()
-        }
-    }
-    fun onMicLongPressed() {
-        val trip = activeVoice?.trip ?: currentTrip
-        if (trip == null) needTrip() else onOpenVoice(trip)
-    }
-
-    fun finishIncomplete(file: File) {
-        if (Trips.finishIncomplete(context, file) == null) message = "Could not rename ${file.name}"
-        refresh++
-    }
-
-    // --- Permissions and start ---
+    // --- Starting a new recording: permissions, then the battery question ---
     fun startRecording() {
         val trip = currentTrip ?: return
         RecordingService.start(context, trip)
@@ -240,7 +164,7 @@ fun MainScreen(
         if (result[Manifest.permission.ACCESS_FINE_LOCATION] == true) checkActivityAndStart()
         else message = "Precise location permission is required to record."
     }
-    fun onStartPressed() {
+    fun checkPermissionsAndStart() {
         when {
             currentTrip == null -> needTrip()
             !hasLocationPermission(context) -> recordPermLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
@@ -249,27 +173,48 @@ fun MainScreen(
         }
     }
 
-    fun fetchFixAndAddPoi() {
-        val trip = currentTrip ?: return
-        // The POI's time is the moment Add POI was pressed; its position, the first fix after that.
-        val pressedAtMs = System.currentTimeMillis()
-        fixJob = scope.launch {
-            val loc = currentGpsLocation(context)
-            fixJob = null
-            if (loc != null) onAddPoi(trip, loc.latitude, loc.longitude, pressedAtMs)
-            else message = "Could not get a GPS fix. Try again outdoors."
+    // --- Broken recordings: one question per file, at app start and every time Start recording is pressed ---
+    var brokenQueue by remember { mutableStateOf<List<File>>(emptyList()) }
+    var startAfterQuestions by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (launchQuestionAsked) return@LaunchedEffect
+        launchQuestionAsked = true
+        brokenQueue = Trips.brokenRecordings((RecordingService.state.value as? RecordingState.Active)?.file)
+    }
+    fun answered(file: File) {
+        brokenQueue = brokenQueue - file
+        if (brokenQueue.isEmpty() && startAfterQuestions) {
+            startAfterQuestions = false
+            checkPermissionsAndStart()
         }
     }
-    val poiPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
-        if (result[Manifest.permission.ACCESS_FINE_LOCATION] == true) fetchFixAndAddPoi()
-        else message = "Precise location permission is required to add a POI."
+    fun onStartPressed() {
+        if (currentTrip == null) { needTrip(); return }
+        val broken = Trips.brokenRecordings(activeRecording?.file)
+        if (broken.isEmpty()) checkPermissionsAndStart() else { startAfterQuestions = true; brokenQueue = broken }
+    }
+
+    // --- Add POI: needs a trip, precise location and the microphone; then the note starts recording at once ---
+    fun beginPoi() {
+        val trip = currentTrip ?: return
+        if (!isGpsEnabled(context)) { message = "Location is off. Turn it on in the phone's settings."; return }
+        AddPoiSession.begin(context, trip)?.let { message = it }
+    }
+    val poiPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        when {
+            !hasLocationPermission(context) -> message = "Precise location permission is required to add a POI."
+            !hasMicPermission(context) -> message = "Microphone permission is required to record the note."
+            else -> beginPoi()
+        }
     }
     fun onAddPoiPressed() {
         when {
+            AddPoiSession.state.value != null -> {}
             currentTrip == null -> needTrip()
-            !hasLocationPermission(context) -> poiPermLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-            !isGpsEnabled(context) -> message = "Location is off. Turn it on in the phone's settings."
-            else -> fetchFixAndAddPoi()
+            !hasLocationPermission(context) || !hasMicPermission(context) -> poiPermLauncher.launch(
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.RECORD_AUDIO),
+            )
+            else -> beginPoi()
         }
     }
 
@@ -277,7 +222,6 @@ fun MainScreen(
     if (showNewTrip) {
         NewTripDialog(
             taken = trips,
-            canDismiss = true,
             onCreate = { name ->
                 Trips.create(context, name)
                 Trips.setCurrentTrip(context, name)
@@ -287,23 +231,29 @@ fun MainScreen(
             onDismiss = { showNewTrip = false },
         )
     }
-    // The file being recorded is never asked about (a resume may still be starting when the list is made).
-    incompleteQueue.firstOrNull { it != activeRecording?.file }?.let { file ->
+    // The file being recorded is never asked about (a continue may still be starting when the list is made).
+    brokenQueue.firstOrNull { it != activeRecording?.file }?.let { file ->
+        val trip = file.parentFile?.parentFile?.name ?: ""
         AlertDialog(
-            onDismissRequest = { },
-            title = { Text("Incomplete recording") },
-            text = { Text("${file.parentFile?.parentFile?.name} / ${file.name}\n\nStop was never pressed for this recording. Resume it, or finish it with its last point's time.") },
+            onDismissRequest = { answered(file) }, // the Back gesture is Dismiss
+            title = { Text("Broken recording") },
+            text = { Text("$trip · ${recordingLabel(file.name)}\n\nStop was never pressed for this recording.") },
+            // Three answers, one under the other.
             confirmButton = {
-                Row {
+                Column(horizontalAlignment = Alignment.End) {
                     TextButton(onClick = {
-                        incompleteQueue = incompleteQueue - file
+                        // Continuing it: that is the recording that runs. The rest are asked about next time.
+                        brokenQueue = emptyList()
+                        startAfterQuestions = false
                         resumeFlow.start(file)
-                    }) { Text("Resume") }
-                    TextButton(onClick = { incompleteQueue = incompleteQueue - file; finishIncomplete(file) }) { Text("Finish") }
+                    }) { Text("Continue") }
+                    TextButton(onClick = {
+                        if (Trips.finishIncomplete(context, file) == null) message = "Could not rename ${file.name}"
+                        refresh++
+                        answered(file)
+                    }) { Text("Don't show again") }
+                    TextButton(onClick = { answered(file) }) { Text("Dismiss") }
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { Trips.dismissIncomplete(context, file); incompleteQueue = incompleteQueue - file }) { Text("Later") }
             },
         )
     }
@@ -321,14 +271,6 @@ fun MainScreen(
             dismissButton = { TextButton(onClick = { showBatteryDialog = false; startRecording() }) { Text("Continue anyway") } },
         )
     }
-    fixJob?.let { job ->
-        AlertDialog(
-            onDismissRequest = { },
-            title = { Text("Getting your location…") },
-            text = { Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(24.dp)); Spacer(Modifier.width(16.dp)); Text("Stay where you are until the GPS has your position.") } },
-            confirmButton = { TextButton(onClick = { job.cancel(); fixJob = null }) { Text("Cancel") } },
-        )
-    }
     message?.let { msg ->
         AlertDialog(
             onDismissRequest = { message = null },
@@ -337,61 +279,61 @@ fun MainScreen(
         )
     }
 
-    // --- Layout: trip picker, POIs / Plans tabs, Add POI, recording controls ---
-    // Recordings are listed in the PC app only; the phone just records them.
+    // --- Layout: trip and sync, the route recording, then Add POI ---
     Column(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp)) {
-        // One row: the trip (tap to switch or add one) · Drive sync (tap for its screen) and its switch.
+        // One row: the trip (tap to switch or add one) · Drive sync (tap for its screen) and the Sync button.
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        var expanded by remember { mutableStateOf(false) }
-        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }, modifier = Modifier.weight(1f)) {
-            val shown = currentTrip ?: "No trip"
-            Row(
-                Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    shown,
-                    style = MaterialTheme.typography.titleLarge.copy(textDirection = shown.resolvedTextDirection()),
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (currentTrip == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                ExposedDropdownMenuDefaults.TrailingIcon(expanded)
-            }
-            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                trips.forEach { trip ->
-                    DropdownMenuItem(
-                        text = { Text(trip, style = MaterialTheme.typography.bodyLarge.copy(textDirection = trip.resolvedTextDirection(), textAlign = trip.resolvedTextAlign()), modifier = Modifier.fillMaxWidth()) },
-                        onClick = { Trips.setCurrentTrip(context, trip); currentTrip = trip; expanded = false },
+            var expanded by remember { mutableStateOf(false) }
+            ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }, modifier = Modifier.weight(1f)) {
+                val shown = currentTrip ?: "No trip"
+                Row(
+                    Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        shown,
+                        style = MaterialTheme.typography.headlineSmall.copy(textDirection = shown.resolvedTextDirection()),
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (currentTrip == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
+                    ExposedDropdownMenuDefaults.TrailingIcon(expanded)
                 }
-                HorizontalDivider()
-                DropdownMenuItem(text = { Text("+ New trip") }, onClick = { expanded = false; showNewTrip = true })
-            }
-        }
-        Spacer(Modifier.width(8.dp))
-        SyncStatus(
-            ready = syncStatus.signedIn && syncStatus.folder != null,
-            line = if (!Sync.configured) "No client" else shortStatus(syncStatus),
-            error = syncStatus.error != null && !syncStatus.busy,
-            onOpen = onOpenDrive,
-        )
-        // The Sync button: one pass, both ways.
-        if (syncStatus.busy) {
-            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 3.dp) }
-        } else {
-            IconButton(
-                onClick = {
-                    when {
-                        !Sync.configured -> message = "This build has no Google client, so Drive sync is off."
-                        !syncStatus.signedIn || syncStatus.folder == null -> onOpenDrive()
-                        else -> Sync.syncNow(context)
+                ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    trips.forEach { trip ->
+                        DropdownMenuItem(
+                            text = { Text(trip, style = MaterialTheme.typography.bodyLarge.copy(textDirection = trip.resolvedTextDirection(), textAlign = trip.resolvedTextAlign()), modifier = Modifier.fillMaxWidth()) },
+                            onClick = { Trips.setCurrentTrip(context, trip); currentTrip = trip; expanded = false },
+                        )
                     }
-                },
-            ) { Icon(Icons.Default.Sync, contentDescription = "Sync with Google Drive", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp)) }
-        }
+                    HorizontalDivider()
+                    DropdownMenuItem(text = { Text("+ New trip") }, onClick = { expanded = false; showNewTrip = true })
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            SyncStatus(
+                ready = syncStatus.signedIn && syncStatus.folder != null,
+                line = if (!Sync.configured) "No client" else shortStatus(syncStatus),
+                error = syncStatus.error != null && !syncStatus.busy,
+                onOpen = onOpenDrive,
+            )
+            // The Sync button: one pass, both ways.
+            if (syncStatus.busy) {
+                Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(30.dp), strokeWidth = 3.dp) }
+            } else {
+                IconButton(
+                    modifier = Modifier.size(56.dp),
+                    onClick = {
+                        when {
+                            !Sync.configured -> message = "This build has no Google client, so Drive sync is off."
+                            !syncStatus.signedIn || syncStatus.folder == null -> onOpenDrive()
+                            else -> Sync.syncNow(context)
+                        }
+                    },
+                ) { Icon(Icons.Default.Sync, contentDescription = "Sync with Google Drive", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp)) }
+            }
         }
         // While syncing: a bar, and the item on its way · MB done · time left.
         if (syncStatus.busy) {
@@ -412,73 +354,55 @@ fun MainScreen(
             )
         }
 
-        Spacer(Modifier.height(4.dp))
-        TabRow(selectedTabIndex = tab, containerColor = MaterialTheme.colorScheme.background) {
-            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("POIs (${pois.size})") })
-            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Plans (${plans.size})") })
-        }
-        Box(Modifier.fillMaxWidth().weight(1f)) {
-            when (tab) {
-                0 -> PoiList(pois, onOpenPoi)
-                else -> PlanList(plans)
-            }
-        }
-
+        // Under the top bar, across the whole width: the route recording.
         Spacer(Modifier.height(12.dp))
-        // Add POI and the audio recorder on one row, the route recording under them across the whole width.
-        Row(Modifier.fillMaxWidth().height(56.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                onClick = ::onAddPoiPressed,
-                contentPadding = PaddingValues(0.dp),
-                modifier = Modifier.size(56.dp),
-            ) {
-                Icon(Icons.Default.AddLocation, contentDescription = "Add POI", modifier = Modifier.size(28.dp))
-            }
-            Box(Modifier.weight(1f).fillMaxHeight()) {
-                MicButton(activeVoice, onClick = ::onMicPressed, onLongPress = ::onMicLongPressed)
-            }
+        Box(Modifier.fillMaxWidth().height(84.dp)) {
+            RecordingCard(state = recordingState, onStart = ::onStartPressed, onStop = { RecordingService.stop(context) })
         }
+        // A line between the route recording and Add POI (which records a note), so the two aren't confused.
+        Spacer(Modifier.height(20.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Spacer(Modifier.height(8.dp))
-        Box(Modifier.fillMaxWidth().height(56.dp)) {
-            RecordingCard(
-                state = recordingState,
-                onStart = ::onStartPressed,
-                onPause = { RecordingService.pause(context) },
-                onResume = { RecordingService.resume(context) },
-                onStop = { RecordingService.stop(context) },
-                onLongPress = onOpenRecordings,
-            )
+        // The rest: a round Add POI button, which becomes the Add POI steps while a POI is being added.
+        Crossfade(targetState = addingPoi != null, label = "add-poi", modifier = Modifier.fillMaxWidth().weight(1f)) { adding ->
+            if (adding) {
+                AddPoiPanel(Modifier.fillMaxSize())
+            } else {
+                Column(
+                    Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Surface(
+                        onClick = ::onAddPoiPressed,
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        shadowElevation = 6.dp,
+                        modifier = Modifier.size(176.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.AddLocation, contentDescription = "Add POI", modifier = Modifier.size(72.dp))
+                        }
+                    }
+                    Spacer(Modifier.height(20.dp))
+                    Text("Add POI", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Records a spoken note here",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    // Keeps the button centred in the space, as if the bar above were not there.
+                    Spacer(Modifier.height(88.dp))
+                }
+            }
         }
     }
 }
 
-/**
- * Like the POI's Record note: Record audio, then a red Stop with the running time.
- * Tap: start / stop a general recording. Long press: the trip's audio recordings.
- */
-@Composable
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-private fun MicButton(active: VoiceState.Active?, onClick: () -> Unit, onLongPress: () -> Unit) {
-    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(active?.file) { while (active != null) { nowMs = System.currentTimeMillis(); delay(500L) } }
-    Surface(
-        shape = ButtonDefaults.shape,
-        color = if (active != null) Color(0xFFC62828) else Color.Transparent,
-        contentColor = if (active != null) Color.White else MaterialTheme.colorScheme.primary,
-        border = if (active != null) null else ButtonDefaults.outlinedButtonBorder(),
-        modifier = Modifier.fillMaxSize().clip(ButtonDefaults.shape)
-            .combinedClickable(onClick = onClick, onLongClick = onLongPress),
-    ) {
-        Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-            Icon(if (active == null) Icons.Default.Mic else Icons.Default.Stop, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text(
-                if (active == null) "Record audio" else "Stop ${RecordingService.formatElapsed(nowMs - active.startedMs)}",
-                style = MaterialTheme.typography.titleMedium,
-            )
-        }
-    }
-}
+fun hasMicPermission(context: android.content.Context): Boolean =
+    ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
 /** Drive sync at a glance: a cloud and a few words (tap for the Drive screen, where errors are spelled out). */
 @Composable
@@ -492,12 +416,12 @@ private fun SyncStatus(ready: Boolean, line: String, error: Boolean, onOpen: () 
                 ready -> MaterialTheme.colorScheme.primary
                 else -> MaterialTheme.colorScheme.onSurfaceVariant
             },
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(30.dp),
         )
-        Spacer(Modifier.width(6.dp))
+        Spacer(Modifier.width(8.dp))
         Text(
             line,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.titleMedium,
             color = if (error) Color(0xFFEF5350) else MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
         )
@@ -505,164 +429,56 @@ private fun SyncStatus(ready: Boolean, line: String, error: Boolean, onOpen: () 
     }
 }
 
+/** Start recording; while recording: the time, the distance ("not moving" when auto-paused) and Stop. */
 @Composable
-private fun PoiList(pois: List<Poi>, onOpen: (File) -> Unit) {
-    if (pois.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("No POIs in this trip yet.", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
-        }
-        return
-    }
-    LazyColumn(Modifier.fillMaxSize()) {
-        items(pois, key = { it.dir.absolutePath }) { poi ->
-            val group = Groups.byKey(poi.groupKey)
-            Row(
-                Modifier.fillMaxWidth().clickable { onOpen(poi.dir) }.padding(vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                Icon(
-                    painter = painterResource(group?.iconRes ?: Groups.noGroupIcon),
-                    contentDescription = group?.name ?: "No group",
-                    tint = group?.color ?: Groups.noGroupColor,
-                    modifier = Modifier.size(28.dp),
-                )
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        poi.name,
-                        style = MaterialTheme.typography.bodyLarge.copy(textDirection = poi.name.resolvedTextDirection(), textAlign = poi.name.resolvedTextAlign()),
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    val photos = poi.media.count { !PoiStore.isAudio(it) }
-                    val notes = poi.media.size - photos
-                    Text(
-                        listOfNotNull(
-                            poi.datetime.ifBlank { null },
-                            if (photos > 0) "$photos photo${if (photos > 1) "s" else ""}" else null,
-                            if (notes > 0) "$notes note${if (notes > 1) "s" else ""}" else null,
-                        ).joinToString(" · "),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
-        }
-    }
-}
-
-/** Every plan in trips/plans/; the phone only reads them, they are made on the PC. Tapping a plan drops its stops down under it. */
-@Composable
-private fun PlanList(plans: List<File>) {
-    if (plans.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("No plans yet. Plans are made in the PC app.", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
-        }
-        return
-    }
-    var open by rememberSaveable { mutableStateOf(listOf<String>()) }
-    LazyColumn(Modifier.fillMaxSize()) {
-        items(plans, key = { it.absolutePath }) { file ->
-            val name = Plans.nameOf(file)
-            val count = remember(file, file.lastModified()) { Plans.read(file).size }
-            val expanded = file.absolutePath in open
-            Row(
-                Modifier.fillMaxWidth()
-                    .clickable { open = if (expanded) open - file.absolutePath else open + file.absolutePath }
-                    .padding(vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        name,
-                        style = MaterialTheme.typography.bodyLarge.copy(textDirection = name.resolvedTextDirection(), textAlign = name.resolvedTextAlign()),
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Text(
-                        if (expanded && count > 0) "$count stop${if (count != 1) "s" else ""} · tap one to navigate with Waze" else "$count stop${if (count != 1) "s" else ""}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Icon(
-                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = if (expanded) "Collapse" else "Expand",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            if (expanded) PlanStops(file)
-            HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
-        }
-    }
-}
-
-@Composable
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-private fun RecordingCard(
-    state: RecordingState,
-    onStart: () -> Unit,
-    onPause: () -> Unit,
-    onResume: () -> Unit,
-    onStop: () -> Unit,
-    onLongPress: () -> Unit,
-) {
-    // A long press on the record control (idle or recording) opens the Recordings screen.
+private fun RecordingCard(state: RecordingState, onStart: () -> Unit, onStop: () -> Unit) {
+    val shape = RoundedCornerShape(12.dp)
     when (state) {
         RecordingState.Idle -> Surface(
-            shape = ButtonDefaults.shape,
-            color = MaterialTheme.colorScheme.primary,
-            contentColor = MaterialTheme.colorScheme.onPrimary,
-            modifier = Modifier.fillMaxSize().clip(ButtonDefaults.shape).combinedClickable(onClick = onStart, onLongClick = onLongPress),
+            onClick = onStart,
+            shape = shape,
+            color = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            modifier = Modifier.fillMaxSize().clip(shape),
         ) {
             Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.FiberManualRecord, contentDescription = null, tint = Color(0xFFE53935))
-                Spacer(Modifier.width(8.dp))
-                Text("Start recording", style = MaterialTheme.typography.titleMedium)
+                Icon(Icons.Default.FiberManualRecord, contentDescription = null, tint = Color(0xFFE53935), modifier = Modifier.size(28.dp))
+                Spacer(Modifier.width(12.dp))
+                // The same type as the trip's name above.
+                Text("Start recording", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
             }
         }
         is RecordingState.Active -> Card(
+            shape = shape,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            modifier = Modifier.fillMaxSize().clip(CardDefaults.shape).combinedClickable(onClick = {}, onLongClick = onLongPress),
+            modifier = Modifier.fillMaxSize(),
         ) {
-                var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
-                LaunchedEffect(Unit) { while (true) { delay(1000L); nowMs = System.currentTimeMillis() } }
-                Row(
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column {
-                        Text(
-                            RecordingService.formatElapsed(state.elapsedMs(nowMs)),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                        )
-                        Text(
-                            when {
-                                state.paused -> "paused · ${RecordingService.formatDistance(state.distanceM)}"
-                                state.autoPaused -> "not moving · ${RecordingService.formatDistance(state.distanceM)}"
-                                else -> RecordingService.formatDistance(state.distanceM)
-                            },
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    if (state.paused) {
-                        IconButton(onClick = onResume, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = "Resume", tint = Color.White, modifier = Modifier.size(32.dp))
-                        }
-                    } else {
-                        IconButton(onClick = onPause, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Default.Pause, contentDescription = "Pause", tint = Color.White, modifier = Modifier.size(32.dp))
-                        }
-                    }
-                    IconButton(onClick = onStop, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Default.Stop, contentDescription = "Stop", tint = Color.Red, modifier = Modifier.size(32.dp))
-                    }
+            var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+            LaunchedEffect(Unit) { while (true) { delay(1000L); nowMs = System.currentTimeMillis() } }
+            Row(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column {
+                    Text(
+                        RecordingService.formatElapsed(state.elapsedMs(nowMs)),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                    )
+                    Text(
+                        if (state.autoPaused) "not moving · ${RecordingService.formatDistance(state.distanceM)}"
+                        else RecordingService.formatDistance(state.distanceM),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
+                IconButton(onClick = onStop, modifier = Modifier.size(64.dp)) {
+                    Icon(Icons.Default.Stop, contentDescription = "Stop", tint = Color.Red, modifier = Modifier.size(44.dp))
+                }
+            }
         }
     }
 }
@@ -670,14 +486,13 @@ private fun RecordingCard(
 @Composable
 private fun NewTripDialog(
     taken: List<String>,
-    canDismiss: Boolean,
     onCreate: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var name by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     AlertDialog(
-        onDismissRequest = { if (canDismiss) onDismiss() },
+        onDismissRequest = onDismiss,
         title = { Text(if (taken.isEmpty()) "Name your first trip" else "New trip") },
         text = {
             OutlinedTextField(
@@ -697,6 +512,6 @@ private fun NewTripDialog(
                 if (err != null) error = err else onCreate(name)
             }) { Text("Create") }
         },
-        dismissButton = if (canDismiss) ({ TextButton(onClick = onDismiss) { Text("Cancel") } }) else null,
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

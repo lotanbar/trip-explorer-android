@@ -4,9 +4,6 @@ import android.content.Context
 import android.media.MediaScannerConnection
 import android.os.Environment
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /** The trips/ root in the phone's storage root and the trip folders inside it. */
 object Trips {
@@ -14,7 +11,6 @@ object Trips {
 
     fun tripDir(trip: String): File = File(root, trip)
     fun recordingsDir(trip: String): File = File(tripDir(trip), Names.RECORDINGS_FOLDER)
-    fun generalRecordingsDir(trip: String): File = File(tripDir(trip), Names.GENERAL_RECORDINGS_FOLDER)
 
     /** Trip folder names, sorted case-insensitively. plans/ is not a trip. */
     fun list(): List<String> =
@@ -29,55 +25,24 @@ object Trips {
         return dir
     }
 
-    /** POI folders of a trip: every subfolder except recordings/ and general_recordings/, sorted case-insensitively. */
-    fun poiDirs(trip: String): List<File> =
-        tripDir(trip).listFiles()
-            ?.filter {
-                it.isDirectory && !it.name.equals(Names.RECORDINGS_FOLDER, ignoreCase = true) &&
-                    !it.name.equals(Names.GENERAL_RECORDINGS_FOLDER, ignoreCase = true)
-            }
-            ?.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name }) ?: emptyList()
-
     /** GPX files of a trip, newest first. */
     fun recordings(trip: String): List<File> =
         recordingsDir(trip).listFiles()
             ?.filter { it.isFile && it.name.endsWith(".gpx", ignoreCase = true) }
             ?.sortedByDescending { it.name } ?: emptyList()
 
-    /** Audio files in general_recordings/, newest first (by the start time in the name, else the file time). */
-    fun generalRecordings(trip: String): List<File> =
-        generalRecordingsDir(trip).listFiles()
-            ?.filter { it.isFile && PoiStore.isAudio(it) }
-            ?.sortedByDescending { voiceStartMs(it.name) ?: it.lastModified() } ?: emptyList()
-
-    /** "DD.MM.YYYY HH-MM-SS.opus": the name of a general recording started at [ms]. */
-    fun voiceFileName(ms: Long): String = SimpleDateFormat(VOICE_PATTERN, Locale.US).format(Date(ms)) + ".opus"
-
-    fun voiceStartMs(name: String): Long? =
-        runCatching { SimpleDateFormat(VOICE_PATTERN, Locale.US).apply { isLenient = false }.parse(name.take(VOICE_PATTERN.length))?.time }.getOrNull()
-
-    private const val VOICE_PATTERN = "dd.MM.yyyy HH-mm-ss"
+    /** Broken (incomplete) recordings of every trip, newest first, except [active] (the one being recorded). */
+    fun brokenRecordings(active: File?): List<File> =
+        list().flatMap { recordings(it) }.filter { GpxWriter.isIncomplete(it) && it != active }
 
     /**
-     * Finishes an incomplete recording: renames it with its last point's time (the start time when it
-     * has no points), the end's date added when that is on a later day. Returns the new file, or null.
+     * "Don't show again": closes a broken recording by renaming it with its last point's time (the start
+     * time when it has no points), the end's date added when that is on a later day. Returns the new file, or null.
      */
     fun finishIncomplete(context: Context, file: File): File? {
         val endMs = GpxWriter.lastPointTimeMs(file) ?: GpxWriter.startMsFromName(file.name) ?: System.currentTimeMillis()
         val target = File(file.parentFile, GpxWriter.finishedFileName(file.name, endMs))
         if (!file.renameTo(target)) return null
-        scan(context, target, file)
-        return target
-    }
-
-    /**
-     * Continue: a finished recording goes back to "<date> <start> - recording.gpx", so it is
-     * incomplete again until Stop. Returns the renamed file, or null.
-     */
-    fun reopenFinished(context: Context, file: File): File? {
-        if (GpxWriter.startMsFromName(file.name) == null) return null
-        val target = File(file.parentFile, file.name.substring(0, 19) + GpxWriter.RECORDING_SUFFIX)
-        if (target.exists() || !file.renameTo(target)) return null
         scan(context, target, file)
         return target
     }
@@ -99,7 +64,6 @@ object Trips {
 
     private const val PREFS = "trip_explorer"
     private const val KEY_CURRENT_TRIP = "current_trip"
-    private const val KEY_DISMISSED = "dismissed_incomplete"
 
     fun currentTrip(context: Context): String? {
         val saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_CURRENT_TRIP, null)
@@ -112,16 +76,5 @@ object Trips {
 
     fun setCurrentTrip(context: Context, trip: String) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_CURRENT_TRIP, trip).apply()
-    }
-
-    /** Incomplete recordings the user chose "Later" for: never asked about again on launch. */
-    fun dismissedIncomplete(context: Context): Set<String> =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getStringSet(KEY_DISMISSED, emptySet()) ?: emptySet()
-
-    fun dismissIncomplete(context: Context, file: File) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val set = HashSet(prefs.getStringSet(KEY_DISMISSED, emptySet()) ?: emptySet())
-        set.add(file.absolutePath)
-        prefs.edit().putStringSet(KEY_DISMISSED, set).apply()
     }
 }

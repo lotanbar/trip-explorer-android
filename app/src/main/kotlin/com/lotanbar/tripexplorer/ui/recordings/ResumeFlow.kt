@@ -34,18 +34,15 @@ import java.io.File
 private const val FAR_KM = 50
 
 /**
- * Resuming an incomplete recording, or continuing a finished one, with its safeguards:
- * a finished one asks "Continue this recording?"; a recording of another trip than the one shown
- * asks before switching to that trip; then the GPS position is taken, and if it is more than
- * [FAR_KM] km from the recording's last point, that is asked too. Continuing renames the file back
- * to "… - recording.gpx", so it is incomplete again until Stop.
+ * Continuing a broken (incomplete) recording, with its safeguards: a recording of another trip than
+ * the one shown asks before switching to that trip; then the GPS position is taken, and if it is more
+ * than [FAR_KM] km from the recording's last point, that is asked too.
  */
 class ResumeFlow internal constructor() {
     internal var step by mutableStateOf<Step?>(null)
 
     internal sealed class Step {
         abstract val file: File
-        data class ConfirmContinue(override val file: File) : Step()
         data class OtherTrip(override val file: File, val shown: String) : Step()
         data class Locating(override val file: File, val job: Job) : Step()
         data class Far(override val file: File, val km: Int) : Step()
@@ -53,16 +50,30 @@ class ResumeFlow internal constructor() {
         data class Message(override val file: File, val text: String) : Step()
     }
 
-    /** Starts the flow for [file] (incomplete: Resume; finished: Continue). */
-    fun start(file: File) {
-        if (GpxWriter.isIncomplete(file)) begin(file) else step = Step.ConfirmContinue(file)
-    }
+    /** Starts the flow for the broken recording [file]. */
+    fun start(file: File) = begin(file)
 
     /** The checks from the trip question on; set by [rememberResumeFlow]. */
     internal var begin: (File) -> Unit = {}
 }
 
-private fun verb(file: File) = if (GpxWriter.isIncomplete(file)) "Resume" else "Continue"
+private const val VERB = "Continue"
+
+/**
+ * A recording's name as a date range, like the PC app's tree: "2026-09-14 08:10 – 17:45",
+ * "2026-09-14 22:10 – 2026-09-15 01:30", or "2026-09-15 09:02 – …" while unfinished.
+ */
+fun recordingLabel(name: String): String {
+    val m = Regex("""^(\d{4}-\d{2}-\d{2}) (\d{2})-(\d{2})-\d{2} - (?:(\d{4}-\d{2}-\d{2}) )?(?:(\d{2})-(\d{2})-\d{2}|recording)\.gpx$""", RegexOption.IGNORE_CASE)
+        .find(name) ?: return name
+    val (date, h, min, endDate, eh, emin) = m.destructured
+    val end = when {
+        eh.isEmpty() -> "…"
+        endDate.isNotEmpty() && endDate != date -> "$endDate $eh:$emin"
+        else -> "$eh:$emin"
+    }
+    return "$date $h:$min – $end"
+}
 
 @Composable
 fun rememberResumeFlow(onStarted: () -> Unit): ResumeFlow {
@@ -71,15 +82,9 @@ fun rememberResumeFlow(onStarted: () -> Unit): ResumeFlow {
     val flow = remember { ResumeFlow() }
 
     fun go(file: File) {
-        var target = file
-        if (!GpxWriter.isIncomplete(file)) {
-            target = Trips.reopenFinished(context, file) ?: run {
-                flow.step = ResumeFlow.Step.Message(file, "Could not reopen ${file.name}"); return
-            }
-        }
         flow.step = null
-        target.parentFile?.parentFile?.name?.let { Trips.setCurrentTrip(context, it) }
-        RecordingService.resumeIncomplete(context, target)
+        file.parentFile?.parentFile?.name?.let { Trips.setCurrentTrip(context, it) }
+        RecordingService.resumeIncomplete(context, file)
         onStarted()
     }
 
@@ -110,20 +115,13 @@ fun rememberResumeFlow(onStarted: () -> Unit): ResumeFlow {
 
     when (val s = flow.step) {
         null -> {}
-        is ResumeFlow.Step.ConfirmContinue -> AlertDialog(
-            onDismissRequest = { flow.step = null },
-            title = { Text("Continue this recording?") },
-            text = { Text("New points go into the same file, as a new segment. It counts as incomplete until you press Stop.") },
-            confirmButton = { TextButton(onClick = { checkTrip(s.file) }) { Text("Continue") } },
-            dismissButton = { TextButton(onClick = { flow.step = null }) { Text("Cancel") } },
-        )
         is ResumeFlow.Step.OtherTrip -> {
             val trip = s.file.parentFile?.parentFile?.name ?: ""
             AlertDialog(
                 onDismissRequest = { flow.step = null },
                 title = { Text("Another trip") },
-                text = { Text("This recording belongs to $trip, not ${s.shown}. ${verb(s.file)} it and switch to $trip?") },
-                confirmButton = { TextButton(onClick = { locate(s.file) }) { Text(verb(s.file)) } },
+                text = { Text("This recording belongs to $trip, not ${s.shown}. ${VERB} it and switch to $trip?") },
+                confirmButton = { TextButton(onClick = { locate(s.file) }) { Text(VERB) } },
                 dismissButton = { TextButton(onClick = { flow.step = null }) { Text("Cancel") } },
             )
         }
@@ -136,8 +134,8 @@ fun rememberResumeFlow(onStarted: () -> Unit): ResumeFlow {
         is ResumeFlow.Step.Far -> AlertDialog(
             onDismissRequest = { flow.step = null },
             title = { Text("Far from this recording") },
-            text = { Text("You're ${s.km} km from where this recording stopped. ${verb(s.file)} it anyway?") },
-            confirmButton = { TextButton(onClick = { go(s.file) }) { Text(verb(s.file)) } },
+            text = { Text("You're ${s.km} km from where this recording stopped. ${VERB} it anyway?") },
+            confirmButton = { TextButton(onClick = { go(s.file) }) { Text(VERB) } },
             dismissButton = { TextButton(onClick = { flow.step = null }) { Text("Cancel") } },
         )
         // No position, no check: it can't be resumed until the GPS finds one.

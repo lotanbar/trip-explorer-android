@@ -47,11 +47,10 @@ sealed class RecordingState {
     data class Active(
         val file: File,
         val trip: String,
-        /** Time recorded before the current stretch (pauses and the gap before a resume are not counted). */
+        /** Time recorded before the current stretch (the gap before a resume is not counted). */
         val recordedMs: Long,
-        /** When the current stretch started; null while paused. */
-        val runningSinceMs: Long?,
-        val paused: Boolean,
+        /** When the current stretch started. */
+        val runningSinceMs: Long,
         val pointCount: Int,
         /** Distance walked so far (m): jitter under 5 m (or under the fix's accuracy) is not counted. */
         val distanceM: Double = 0.0,
@@ -59,7 +58,7 @@ sealed class RecordingState {
         val autoPaused: Boolean = false,
     ) : RecordingState() {
         /** The time recorded so far: what the timer shows. */
-        fun elapsedMs(nowMs: Long): Long = recordedMs + (runningSinceMs?.let { (nowMs - it).coerceAtLeast(0) } ?: 0)
+        fun elapsedMs(nowMs: Long): Long = recordedMs + (nowMs - runningSinceMs).coerceAtLeast(0)
     }
 }
 
@@ -67,7 +66,7 @@ sealed class RecordingState {
  * Foreground service that records location fixes to a GPX file: one fix per second from the fused
  * provider (GPS helped by Wi-Fi and cell towers; the GPS provider if the phone has no fused one),
  * batched by up to 10 s when the phone supports it, saved to disk every 10 s.
- * Pause switches GPS off and starts a new segment; Stop renames the file to its final name.
+ * Stop switches GPS off and renames the file to its final name; a resume starts a new segment.
  *
  * Auto-pause: after 10 minutes with fewer than 20 steps and every accurate fix within 50 m of their
  * middle, GPS goes off (same segment, the timer keeps running). It comes back on at 10 steps within
@@ -112,8 +111,8 @@ class RecordingService : Service() {
         override fun onLocationChanged(locations: MutableList<Location>) = onFix(locations)
         override fun onProviderEnabled(provider: String) {}
         override fun onProviderDisabled(provider: String) {
-            val st = state.value as? RecordingState.Active ?: return
-            if (!st.paused) notify("GPS is off", "Turn location back on to keep recording")
+            if (state.value !is RecordingState.Active) return
+            notify("GPS is off", "Turn location back on to keep recording")
         }
     }
 
@@ -141,8 +140,6 @@ class RecordingService : Service() {
                 startForeground(NOTIF_ID, build("Resuming recording…", File(path).name))
                 scope.launch { resumeIncomplete(File(path)) }
             }
-            ACTION_PAUSE -> scope.launch { pause() }
-            ACTION_RESUME -> resume()
             ACTION_STOP -> scope.launch { stop() }
             null -> {
                 // Restarted by the OS after being killed: continue into the same file as a new segment.
@@ -167,7 +164,7 @@ class RecordingService : Service() {
         Trips.scan(this, file)
         prefs().edit().putString(KEY_ACTIVE_FILE, file.absolutePath).apply()
         anchor = null
-        _state.value = RecordingState.Active(file, trip, recordedMs = 0, runningSinceMs = now, paused = false, pointCount = 0)
+        _state.value = RecordingState.Active(file, trip, recordedMs = 0, runningSinceMs = now, pointCount = 0)
         startGps()
         startSensors()
         startTicker()
@@ -182,31 +179,11 @@ class RecordingService : Service() {
         anchor = null
         _state.value = RecordingState.Active(
             file, trip, recordedMs = GpxWriter.recordedMs(file), runningSinceMs = System.currentTimeMillis(),
-            paused = false, pointCount = count, distanceM = GpxWriter.distanceMeters(file),
+            pointCount = count, distanceM = GpxWriter.distanceMeters(file),
         )
         startGps()
         startSensors()
         startTicker()
-    }
-
-    private suspend fun pause() {
-        val st = state.value as? RecordingState.Active ?: return
-        if (st.paused || stopping) return
-        stopGps()
-        stopSensors()
-        flush()
-        writer?.breakSegment()
-        anchor = null // a new segment: the walk while paused is not counted
-        _state.value = st.copy(paused = true, autoPaused = false, recordedMs = st.elapsedMs(System.currentTimeMillis()), runningSinceMs = null)
-        notify("Recording paused", st.trip)
-    }
-
-    private fun resume() {
-        val st = state.value as? RecordingState.Active ?: return
-        if (!st.paused || stopping) return
-        _state.value = st.copy(paused = false, runningSinceMs = System.currentTimeMillis())
-        startGps()
-        startSensors()
     }
 
     private suspend fun stop() {
@@ -234,7 +211,7 @@ class RecordingService : Service() {
 
     private fun onFix(locations: List<Location>) {
         val st = state.value as? RecordingState.Active ?: return
-        if (st.paused || stopping) return
+        if (stopping) return
         var distance = st.distanceM
         for (loc in locations) {
             pending.add(GpxPoint(loc.latitude, loc.longitude, loc.time, if (loc.hasAccuracy()) loc.accuracy else Float.NaN))
@@ -275,7 +252,7 @@ class RecordingService : Service() {
                 val st = state.value as? RecordingState.Active ?: break
                 tick++
                 if (tick % SAVE_EVERY_SEC == 0) flush()
-                if (!st.paused && !st.autoPaused) {
+                if (!st.autoPaused) {
                     checkStill()
                     if ((state.value as? RecordingState.Active)?.autoPaused == true) continue
                     notify("Recording: ${formatElapsed(st.elapsedMs(System.currentTimeMillis()))} · ${formatDistance(st.distanceM)}", "${st.trip} · ${st.pointCount} points")
@@ -319,7 +296,7 @@ class RecordingService : Service() {
 
     private fun wake() {
         val st = state.value as? RecordingState.Active ?: return
-        if (!st.autoPaused || st.paused || stopping) return
+        if (!st.autoPaused || stopping) return
         runCatching { sensorManager.cancelTriggerSensor(motionListener, motionSensor) }
         _state.value = st.copy(autoPaused = false)
         startGps()
@@ -395,8 +372,6 @@ class RecordingService : Service() {
 
     companion object {
         private const val ACTION_START = "com.lotanbar.tripexplorer.START"
-        private const val ACTION_PAUSE = "com.lotanbar.tripexplorer.PAUSE"
-        private const val ACTION_RESUME = "com.lotanbar.tripexplorer.RESUME"
         private const val ACTION_STOP = "com.lotanbar.tripexplorer.STOP"
         private const val ACTION_RESUME_INCOMPLETE = "com.lotanbar.tripexplorer.RESUME_INCOMPLETE"
         private const val EXTRA_TRIP = "trip"
@@ -431,8 +406,6 @@ class RecordingService : Service() {
         fun resumeIncomplete(context: Context, file: File) =
             ContextCompat.startForegroundService(context, intent(context, ACTION_RESUME_INCOMPLETE).putExtra(EXTRA_FILE, file.absolutePath))
 
-        fun pause(context: Context) = context.startService(intent(context, ACTION_PAUSE))
-        fun resume(context: Context) = context.startService(intent(context, ACTION_RESUME))
         fun stop(context: Context) = context.startService(intent(context, ACTION_STOP))
 
         private fun intent(context: Context, action: String) =

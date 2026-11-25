@@ -1,6 +1,5 @@
 package com.lotanbar.tripexplorer
 
-import com.lotanbar.tripexplorer.ui.recordings.VoiceRecordingsScreen
 import android.os.Bundle
 import android.os.Environment
 import androidx.activity.ComponentActivity
@@ -23,44 +22,22 @@ import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Modifier
 import com.lotanbar.tripexplorer.ui.main.MainScreen
 import com.lotanbar.tripexplorer.ui.permission.StoragePermissionScreen
-import com.lotanbar.tripexplorer.ui.poi.AddPoiScreen
-import com.lotanbar.tripexplorer.ui.poi.MediaPreviewScreen
-import com.lotanbar.tripexplorer.ui.poi.PoiScreen
 import com.lotanbar.tripexplorer.ui.sync.DriveScreen
-import com.lotanbar.tripexplorer.ui.recordings.RecordingsScreen
 import com.lotanbar.tripexplorer.ui.theme.TripExplorerTheme
-import java.io.File
 
+/** The phone has two screens: the main screen (Add POI happens inside it) and the Drive screen. */
 sealed class Screen {
     data object Main : Screen()
-    data class AddPoi(val trip: String, val lat: Double, val lon: Double, val atMs: Long) : Screen()
-    data class Poi(val dir: File) : Screen()
-    data class Media(val paths: List<String>, val index: Int) : Screen()
     data object Drive : Screen()
-    data object Recordings : Screen()
-    data class Voice(val trip: String) : Screen()
 
-    /** Encoded for the saved instance state, so the stack survives process death (e.g. under the camera). */
-    fun encode(): List<String> = when (this) {
-        Main -> listOf("main")
-        is AddPoi -> listOf("add", trip, lat.toString(), lon.toString(), atMs.toString())
-        is Poi -> listOf("poi", dir.absolutePath)
-        is Media -> listOf("media", index.toString()) + paths
-        Drive -> listOf("drive")
-        Recordings -> listOf("recordings")
-        is Voice -> listOf("voice", trip)
+    /** Encoded for the saved instance state, so the stack survives the activity being recreated. */
+    fun encode(): String = when (this) {
+        Main -> "main"
+        Drive -> "drive"
     }
 
     companion object {
-        fun decode(parts: List<String>): Screen = when (parts[0]) {
-            "add" -> AddPoi(parts[1], parts[2].toDouble(), parts[3].toDouble(), parts[4].toLong())
-            "poi" -> Poi(File(parts[1]))
-            "media" -> Media(parts.drop(2), parts[1].toInt())
-            "drive" -> Drive
-            "recordings" -> Recordings
-            "voice" -> Voice(parts[1])
-            else -> Main
-        }
+        fun decode(s: String): Screen = if (s == "drive") Drive else Main
     }
 }
 
@@ -79,8 +56,8 @@ class MainActivity : ComponentActivity() {
 }
 
 private val stackSaver = listSaver<MutableList<Screen>, String>(
-    save = { stack -> stack.map { it.encode().joinToString("\u0000") } },
-    restore = { saved -> saved.map { Screen.decode(it.split("\u0000")) }.toMutableStateList() },
+    save = { stack -> stack.map { it.encode() } },
+    restore = { saved -> saved.map(Screen::decode).distinct().toMutableStateList() },
 )
 
 @Composable
@@ -98,25 +75,10 @@ private fun App() {
 
     val screen = stack.last()
     // Each screen keeps its own saved state while another one is on top of it.
-    stateHolder.SaveableStateProvider(key = "${stack.lastIndex}:${screen.encode().joinToString("/").hashCode()}") {
+    stateHolder.SaveableStateProvider(key = "${stack.lastIndex}:${screen.encode()}") {
         when (screen) {
-            Screen.Main -> MainScreen(
-                onAddPoi = { trip, lat, lon, atMs -> push(Screen.AddPoi(trip, lat, lon, atMs)) },
-                onOpenPoi = { push(Screen.Poi(it)) },
-                onOpenDrive = { push(Screen.Drive) },
-                onOpenRecordings = { push(Screen.Recordings) },
-                onOpenVoice = { push(Screen.Voice(it)) },
-            )
-            is Screen.AddPoi -> AddPoiScreen(screen.trip, screen.lat, screen.lon, screen.atMs, onDone = ::pop)
-            is Screen.Poi -> PoiScreen(
-                dir = screen.dir,
-                onRenamed = { newDir -> stack[stack.lastIndex] = Screen.Poi(newDir) },
-                onOpenMedia = { paths, index -> push(Screen.Media(paths, index)) },
-            )
-            is Screen.Media -> MediaPreviewScreen(screen.paths, screen.index)
+            Screen.Main -> MainScreen(onOpenDrive = { push(Screen.Drive) })
             Screen.Drive -> DriveScreen(onDone = ::pop)
-            Screen.Recordings -> RecordingsScreen(onResumed = ::pop)
-            is Screen.Voice -> VoiceRecordingsScreen(screen.trip, onOpenMedia = { paths, index -> push(Screen.Media(paths, index)) })
         }
     }
 }
